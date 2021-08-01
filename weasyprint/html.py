@@ -137,6 +137,11 @@ def handle_img(element, box, get_image_from_uri, base_url):
     if src:
         image = get_image_from_uri(url=src)
         if image is not None:
+
+            optional_content_label = element.get('data-optional-content-label')
+            if optional_content_label:
+                image.optional_content_label = optional_content_label
+
             return [make_replaced_box(element, box, image)]
         else:
             # Invalid image, use the alt-text.

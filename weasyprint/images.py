@@ -42,6 +42,7 @@ class RasterImage:
         self.intrinsic_ratio = (
             self.intrinsic_width / self.intrinsic_height
             if self.intrinsic_height != 0 else float('inf'))
+        self.optional_content_label = None
 
     def get_intrinsic_size(self, image_resolution, _font_size):
         # Raster images are affected by the 'image-resolution' property.
@@ -57,6 +58,8 @@ class RasterImage:
         stream.transform(
             concrete_width, 0, 0, -concrete_height, 0, concrete_height)
         stream.draw_x_object(image_name)
+        if self.optional_content_label:
+            stream.optional_content_group.append([image_name, self.optional_content_label])
 
 
 class SVGImage:

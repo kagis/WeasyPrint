@@ -134,6 +134,9 @@ class Stream(pydyf.Stream):
         self.ink_rect = ffi.new('PangoRectangle *')
         self.logical_rect = ffi.new('PangoRectangle *')
 
+        # track optional content group
+        self.optional_content_group = []
+
     @property
     def ctm(self):
         return self._ctm_stack[-1]
@@ -1236,6 +1239,24 @@ class Document:
         if self.metadata.modified:
             pdf.info['ModDate'] = pydyf.String(
                 _w3c_date_to_pdf(self.metadata.modified, 'modified'))
+
+        # adding optional content group
+        ocg_control_references = pydyf.Array()
+        if stream.optional_content_group:
+            for id, label in stream.optional_content_group:
+                ocg_dictionary = pydyf.Dictionary({
+                    'Type': '/OCG',
+                    'Name': pydyf.String(f'{label}'),
+                })
+                pdf.add_object(ocg_dictionary)
+                ocg_control_references.append(ocg_dictionary.reference)
+                resources['XObject'][id].extra['OC'] = ocg_dictionary.reference
+        
+        if ocg_control_references:
+            pdf.catalog['OCProperties'] = pydyf.Dictionary({
+                    'D': pydyf.Dictionary({ 'Order': ocg_control_references }),
+                    'OCGs': ocg_control_references,
+            })
 
         # Embedded files
         attachments = self.metadata.attachments + (attachments or [])
