@@ -202,7 +202,7 @@ class Box:
         return (self.border_box_x(), self.border_box_y(),
                 self.border_width(), self.border_height())
     
-    def svg_content_area(self):
+    def geocoding_content_area(self):
         return (self.position_x + self.margin_left + self.border_left_width,
             self.position_y + self.margin_top + self.border_top_width, self.width, self.height)
 

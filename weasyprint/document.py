@@ -746,7 +746,7 @@ class Page:
             if has_anchor:
                 self.anchors[anchor_name] = pos_x, pos_y
             if box.is_for_geocoding_bbox:
-                pos_x, pos_y, width, height = box.svg_content_area()
+                pos_x, pos_y, width, height = box.geocoding_content_area()
                 if matrix:
                     geocoding = (rectangle_aabb(matrix, pos_x, pos_y, width, height), box.bounding_box, box.epsg)
                 else:

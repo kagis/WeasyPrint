@@ -117,11 +117,7 @@ def make_replaced_box(element, box, image):
     # TODO: find another solution
     new_box.string_set = box.string_set
     new_box.bookmark_label = box.bookmark_label
-
-    # copy geocodings bounding box
-    new_box.is_for_geocoding_bbox = box.is_for_geocoding_bbox
-    new_box.bounding_box = box.bounding_box
-    new_box.epsg = box.epsg
+    
     return new_box
 
 
@@ -262,6 +258,18 @@ def handle_a(element, box, _get_image_from_uri, base_url):
     box.download_name = element.get('download')
     return [box]
 
+@handler('div')
+def handle_div(element, box, _get_image_from_uri, base_url):
+    """Handle the ``div`` element."""
+    bbox = element.get('data-viewport-bounding-box')
+    epsg = element.get('data-epsg')
+
+    if bbox is not None and epsg is not None:
+        box.is_for_geocoding_bbox = True
+        xmin, ymin, xmax, ymax = [float(i) for i in bbox.strip().split(" ")]
+        box.bounding_box = [xmin, ymin, xmax, ymax]
+        box.epsg = epsg
+    return [box]
 
 @handler('{http://www.w3.org/2000/svg}svg')
 def handle_svg(element, box, get_image_from_uri, base_url):
@@ -269,15 +277,6 @@ def handle_svg(element, box, get_image_from_uri, base_url):
     content.
 
     """
-
-    bbox = element.get('geonomix:bbox')
-    epsg = element.get('geonomix:epsg')
-
-    if bbox is not None and epsg is not None:
-        box.is_for_geocoding_bbox = True
-        xmin, ymin, xmax, ymax = [float(i) for i in bbox.strip().split(" ")]
-        box.bounding_box = [xmin, ymin, xmax, ymax]
-        box.epsg = epsg
 
     # TODO: handle href base for inline svg tags
     if '{http://www.w3.org/2000/xmlns/}xmlns' in element.attrib:
