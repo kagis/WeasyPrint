@@ -66,7 +66,7 @@ def _w3c_date_to_pdf(string, attr_name):
 
 
 class Font:
-    def __init__(self, file_content, pango_font):
+    def __init__(self, file_content, pango_font, index):
         pango_metrics = pango.pango_font_get_metrics(pango_font, ffi.NULL)
         self._font_description = pango.pango_font_describe(pango_font)
         self.family = ffi.string(pango.pango_font_description_get_family(
@@ -79,7 +79,8 @@ class Font:
         sha.update(description_string)
 
         self.file_content = file_content
-        self.file_hash = hash(file_content)
+        self.index = index
+        self.file_hash = hash(file_content + bytes(index))
         self.hash = ''.join(
             chr(65 + letter % 26) for letter in sha.digest()[:6])
         self.name = (
@@ -158,7 +159,7 @@ class Stream(pydyf.Stream):
         self._ctm_stack[-1] = Matrix(a, b, c, d, e, f) @ self.ctm
 
     def begin_text(self):
-        if self.stream[-1] == b'ET':
+        if self.stream and self.stream[-1] == b'ET':
             self._current_font = self._old_font
             self.stream.pop()
         else:
@@ -213,8 +214,8 @@ class Stream(pydyf.Stream):
                     self._states[key] = pydyf.Dictionary({'ca': alpha})
                 super().set_state(key)
 
-    def add_font(self, font_hash, font_content, pango_font):
-        self._document.fonts[font_hash] = Font(font_content, pango_font)
+    def add_font(self, font_hash, font_content, pango_font, index):
+        self._document.fonts[font_hash] = Font(font_content, pango_font, index)
         return self._document.fonts[font_hash]
 
     def get_fonts(self):
@@ -272,7 +273,7 @@ class Stream(pydyf.Stream):
 
         if 'transparency' in pillow_image.info:
             pillow_image = pillow_image.convert('RGBA')
-        elif pillow_image.mode in ('1', 'P'):
+        elif pillow_image.mode in ('1', 'P', 'I'):
             pillow_image = pillow_image.convert('RGB')
 
         if pillow_image.mode in ('RGB', 'RGBA'):
@@ -324,8 +325,7 @@ class Stream(pydyf.Stream):
         self._x_objects[image_name] = xobject
         return image_name
 
-    def add_pattern(self, x, y, width, height, repeat_width, repeat_height,
-                    matrix):
+    def add_pattern(self, width, height, repeat_width, repeat_height, matrix):
         states = pydyf.Dictionary()
         x_objects = pydyf.Dictionary()
         patterns = pydyf.Dictionary()
@@ -337,7 +337,6 @@ class Stream(pydyf.Stream):
             'Shading': shadings,
             'Font': None,  # Will be set by _use_references
         })
-        matrix = Matrix(1, 0, 0, 1, x, y) @ matrix
         extra = pydyf.Dictionary({
             'Type': '/Pattern',
             'PatternType': 1,
@@ -572,6 +571,27 @@ class Matrix(list):
             for i in range(len(self))])
 
     @property
+    def invert(self):
+        d = self.determinant
+        return Matrix(matrix=[
+            [
+                (self[1][1] * self[2][2] - self[1][2] * self[2][1]) / d,
+                (self[0][1] * self[2][2] - self[0][2] * self[2][1]) / -d,
+                (self[0][1] * self[1][2] - self[0][2] * self[1][1]) / d,
+            ],
+            [
+                (self[1][0] * self[2][2] - self[1][2] * self[2][0]) / -d,
+                (self[0][0] * self[2][2] - self[0][2] * self[2][0]) / d,
+                (self[0][0] * self[1][2] - self[0][2] * self[1][0]) / -d,
+            ],
+            [
+                (self[1][0] * self[2][1] - self[1][1] * self[2][0]) / d,
+                (self[0][0] * self[2][1] - self[0][1] * self[2][0]) / -d,
+                (self[0][0] * self[1][1] - self[0][1] * self[1][0]) / d,
+            ],
+        ])
+
+    @property
     def determinant(self):
         assert len(self) == len(self[0]) == 3
         return (
@@ -736,12 +756,12 @@ class Page:
         for child in box.all_children():
             self._gather_links_and_bookmarks(child, matrix)
 
-    def paint(self, context, left_x=0, top_y=0, scale=1, clip=False):
+    def paint(self, stream, left_x=0, top_y=0, scale=1, clip=False):
         """Paint the page into the PDF file.
 
-        :type context: ``Context``
-        :param context:
-            A context object.
+        :type stream: ``document.Stream``
+        :param stream:
+            A document stream.
         :param float left_x:
             X coordinate of the left of the page, in PDF points.
         :param float top_y:
@@ -753,15 +773,15 @@ class Page:
             not provided, content can overflow.
 
         """
-        with stacked(context):
+        with stacked(stream):
             # Make (0, 0) the top-left corner, and make user units CSS pixels:
-            context.transform(scale, 0, 0, scale, left_x, top_y)
+            stream.transform(a=scale, d=scale, e=left_x, f=top_y)
             if clip:
                 width = self.width
                 height = self.height
-                context.rectangle(0, 0, width, height)
-                context.clip()
-            draw_page(self._page_box, context)
+                stream.rectangle(0, 0, width, height)
+                stream.clip()
+            draw_page(self._page_box, stream)
 
 
 class DocumentMetadata:
@@ -1080,7 +1100,7 @@ class Document:
                 left / scale, top / scale, right / scale, bottom / scale)
             stream = Stream(
                 self, page_rectangle, states, x_objects, patterns, shadings)
-            stream.transform(1, 0, 0, -1, 0, page.height * scale)
+            stream.transform(d=-1, f=(page.height * scale))
             page.paint(stream, scale=scale)
             pdf.add_object(stream)
 
@@ -1294,7 +1314,7 @@ class Document:
                 full_font = io.BytesIO(fonts[0].file_content)
                 optimized_font = io.BytesIO()
                 try:
-                    ttfont = TTFont(full_font)
+                    ttfont = TTFont(full_font, fontNumber=fonts[0].index)
                     options = subset.Options(
                         retain_gids=True, passthrough_tables=True,
                         ignore_missing_glyphs=True, notdef_glyph=True)

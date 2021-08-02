@@ -126,8 +126,7 @@ def draw_stacking_context(stream, stacking_context):
 
         if box.transformation_matrix:
             if box.transformation_matrix.determinant:
-                ((a, b, _), (c, d, _), (e, f, _)) = box.transformation_matrix
-                stream.transform(a, b, c, d, e, f)
+                stream.transform(*box.transformation_matrix.values)
             else:
                 return
 
@@ -360,6 +359,8 @@ def draw_table_backgrounds(stream, page, table):
 
 
 def draw_background_image(stream, layer, image_rendering):
+    from .document import Matrix
+
     if layer.image is None or 0 in layer.size:
         return
 
@@ -412,9 +413,10 @@ def draw_background_image(stream, layer, image_rendering):
         repeat_width = 2 * stream.page_rectangle[2]
         repeat_height = 2 * stream.page_rectangle[3]
 
+    matrix = Matrix(e=position_x + positioning_x, f=position_y + positioning_y)
+    matrix @= stream.ctm
     pattern = stream.add_pattern(
-        position_x + positioning_x, position_y + positioning_y,
-        image_width, image_height, repeat_width, repeat_height, stream.ctm)
+        image_width, image_height, repeat_width, repeat_height, matrix)
     group = pattern.add_group([0, 0, repeat_width, repeat_height])
 
     with stacked(stream):
@@ -941,7 +943,6 @@ def draw_inline_level(stream, page, box, offset_x=0, text_overflow='clip',
             if isinstance(box, boxes.LineBox):
                 text_overflow = box.text_overflow
                 block_ellipsis = box.block_ellipsis
-            in_text = False
             ellipsis = 'none'
             for i, child in enumerate(box.children):
                 if i == len(box.children) - 1:
@@ -953,28 +954,18 @@ def draw_inline_level(stream, page, box, offset_x=0, text_overflow='clip',
                     child_offset_x = (
                         offset_x + child.position_x - box.position_x)
                 if isinstance(child, boxes.TextBox):
-                    if not in_text:
-                        stream.begin_text()
-                        in_text = True
                     draw_text(
                         stream, child, child_offset_x, text_overflow, ellipsis)
                 else:
-                    if in_text:
-                        in_text = False
-                        stream.end_text()
                     draw_inline_level(
                         stream, page, child, child_offset_x, text_overflow,
                         ellipsis)
-            if in_text:
-                stream.end_text()
         elif isinstance(box, boxes.InlineReplacedBox):
             draw_replacedbox(stream, box)
         else:
             assert isinstance(box, boxes.TextBox)
             # Should only happen for list markers
-            stream.begin_text()
             draw_text(stream, box, offset_x, text_overflow)
-            stream.end_text()
 
 
 def draw_text(stream, textbox, offset_x, text_overflow, block_ellipsis):
@@ -990,7 +981,9 @@ def draw_text(stream, textbox, offset_x, text_overflow, block_ellipsis):
     stream.set_alpha(textbox.style['color'][3])
 
     textbox.pango_layout.reactivate(textbox.style)
+    stream.begin_text()
     draw_first_line(stream, textbox, text_overflow, block_ellipsis, x, y)
+    stream.end_text()
 
     # Draw text decoration
     values = textbox.style['text_decoration_line']
@@ -1093,7 +1086,8 @@ def draw_first_line(stream, textbox, text_overflow, block_ellipsis, x, y):
             hb_blob = harfbuzz.hb_face_reference_blob(hb_face)
             hb_data = harfbuzz.hb_blob_get_data(hb_blob, stream.length)
             file_content = ffi.unpack(hb_data, int(stream.length[0]))
-            font = stream.add_font(font_hash, file_content, pango_font)
+            index = harfbuzz.hb_face_get_index(hb_face)
+            font = stream.add_font(font_hash, file_content, pango_font, index)
 
         # Positions of the glyphs in the UTF-8 string
         utf8_positions = [offset + clusters[i] for i in range(1, num_glyphs)]

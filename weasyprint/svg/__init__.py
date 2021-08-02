@@ -14,17 +14,19 @@ from cssselect2 import ElementWrapper
 
 from .bounding_box import bounding_box, is_valid_bounding_box
 from .css import parse_declarations, parse_stylesheets
-from .defs import apply_filters, draw_gradient_or_pattern, paint_mask, use
+from .defs import (
+    apply_filters, clip_path, draw_gradient_or_pattern, paint_mask, use)
 from .images import image, svg
 from .path import path
 from .shapes import circle, ellipse, line, polygon, polyline, rect
 from .text import text
-from .utils import color, normalize, parse_url, preserve_ratio, size, transform
+from .utils import (
+    PointError, color, normalize, parse_url, preserve_ratio, size, transform)
 
-# TODO: clipPath
 TAGS = {
     'a': text,
     'circle': circle,
+    'clipPath': clip_path,
     'ellipse': ellipse,
     'image': image,
     'line': line,
@@ -73,13 +75,14 @@ COLOR_ATTRIBUTES = frozenset((
 ))
 
 DEF_TYPES = frozenset((
-    'marker',
-    'gradient',
-    'pattern',
-    'path',
-    'mask',
+    'clipPath',
     'filter',
+    'gradient',
     'image',
+    'marker',
+    'mask',
+    'path',
+    'pattern',
 ))
 
 
@@ -158,8 +161,10 @@ class Node:
 
             # Fix text in text tags
             if child.tag in ('text', 'textPath', 'a'):
-                child._wrapper.etree_children, _ = child.text_children(
+                children, _ = child.text_children(
                     wrapper, trailing_space=True, text_root=True)
+                child._wrapper.etree_children = [
+                    child._etree_node for child in children]
 
             yield child
 
@@ -318,28 +323,39 @@ class SVG:
     def point(self, x, y, font_size):
         """Compute size of an x/y or width/height couple."""
         return (
-            size(x, font_size, self.concrete_width),
-            size(y, font_size, self.concrete_height))
+            size(x, font_size, self.inner_width),
+            size(y, font_size, self.inner_height))
 
     def length(self, length, font_size):
         """Compute size of an arbirtary attribute."""
-        return size(length, font_size, self.normalized_diagonal)
+        return size(length, font_size, self.inner_diagonal)
 
     def draw(self, stream, concrete_width, concrete_height, base_url,
              url_fetcher, context):
         """Draw image on a stream."""
         self.stream = stream
+
         self.concrete_width = concrete_width
         self.concrete_height = concrete_height
         self.normalized_diagonal = (
             hypot(concrete_width, concrete_height) / sqrt(2))
+
+        viewbox = self.get_viewbox()
+        if viewbox:
+            self.inner_width, self.inner_height = viewbox[2], viewbox[3]
+        else:
+            self.inner_width = self.concrete_width
+            self.inner_height = self.concrete_height
+        self.inner_diagonal = (
+            hypot(self.inner_width, self.inner_height) / sqrt(2))
+
         self.base_url = base_url
         self.url_fetcher = url_fetcher
         self.context = context
 
         self.draw_node(self.tree, size('12pt'))
 
-    def draw_node(self, node, font_size):
+    def draw_node(self, node, font_size, fill_stroke=True):
         """Draw a node."""
         if node.tag == 'defs':
             return
@@ -347,7 +363,8 @@ class SVG:
         # Update font size
         font_size = size(node.get('font-size', '1em'), font_size, font_size)
 
-        self.stream.push_state()
+        if fill_stroke:
+            self.stream.push_state()
 
         # Apply filters
         filter_ = self.filters.get(parse_url(node.get('filter')).fragment)
@@ -356,7 +373,7 @@ class SVG:
 
         # Create substream for opacity
         opacity = float(node.get('opacity', 1))
-        if 0 <= opacity < 1:
+        if fill_stroke and 0 <= opacity < 1:
             original_stream = self.stream
             box = self.calculate_bounding_box(node, font_size)
             if is_valid_bounding_box(box):
@@ -365,10 +382,29 @@ class SVG:
                 coords = (0, 0, self.concrete_width, self.concrete_height)
             self.stream = self.stream.add_group(coords)
 
-        # Apply transformations
+        # Apply transform attribute
         self.transform(node.get('transform'), font_size)
-        x, y = self.point(node.get('x'), node.get('y'), font_size)
-        self.stream.transform(1, 0, 0, 1, x, y)
+
+        # Clip
+        clip_path = parse_url(node.get('clip-path')).fragment
+        if clip_path and clip_path in self.paths:
+            old_ctm = self.stream.ctm
+            clip_path = self.paths[clip_path]
+            if clip_path.get('clipPathUnits') == 'objectBoundingBox':
+                x, y = self.point(node.get('x'), node.get('y'), font_size)
+                width, height = self.point(
+                    node.get('width'), node.get('height'), font_size)
+                self.stream.transform(a=width, d=height, e=x, f=y)
+            clip_path._etree_node.tag = 'g'
+            self.draw_node(clip_path, font_size, fill_stroke=False)
+            # At least set the clipping area to an empty path, so that it’s
+            # totally clipped when the clipping path is empty.
+            self.stream.rectangle(0, 0, 0, 0)
+            self.stream.clip()
+            self.stream.end()
+            new_ctm = self.stream.ctm
+            if new_ctm.determinant:
+                self.stream.transform(*(old_ctm @ new_ctm.invert).values)
 
         # Manage display and visibility
         display = node.get('display', 'inline') != 'none'
@@ -376,12 +412,15 @@ class SVG:
 
         # Draw node
         if visible and node.tag in TAGS:
-            TAGS[node.tag](self, node, font_size)
+            try:
+                TAGS[node.tag](self, node, font_size)
+            except PointError:
+                pass
 
         # Draw node children
         if display and node.tag not in DEF_TYPES:
             for child in node:
-                self.draw_node(child, font_size)
+                self.draw_node(child, font_size, fill_stroke)
 
         # Apply mask
         mask = self.masks.get(parse_url(node.get('mask')).fragment)
@@ -389,13 +428,14 @@ class SVG:
             paint_mask(self, node, mask, opacity)
 
         # Fill and stroke
-        self.fill_stroke(node, font_size)
+        if fill_stroke:
+            self.fill_stroke(node, font_size)
 
         # Draw markers
-        self.draw_markers(node, font_size)
+        self.draw_markers(node, font_size, fill_stroke)
 
         # Apply opacity stream and restore original stream
-        if 0 <= opacity < 1:
+        if fill_stroke and 0 <= opacity < 1:
             group_id = self.stream.id
             self.stream = original_stream
             self.stream.set_alpha(opacity, stroke=True, fill=True)
@@ -407,9 +447,10 @@ class SVG:
             self.cursor_d_position = [0, 0]
             self.text_path_width = 0
 
-        self.stream.pop_state()
+        if fill_stroke:
+            self.stream.pop_state()
 
-    def draw_markers(self, node, font_size):
+    def draw_markers(self, node, font_size, fill_stroke):
         """Draw markers defined in a node."""
         if not node.vertices:
             return
@@ -519,7 +560,7 @@ class SVG:
                     scale_x * cos(angle), scale_x * sin(angle),
                     -scale_y * sin(angle), scale_y * cos(angle),
                     *point)
-                self.stream.transform(1, 0, 0, 1, -translate_x, -translate_y)
+                self.stream.transform(e=-translate_x, f=-translate_y)
 
                 overflow = marker_node.get('overflow', 'hidden')
                 if clip_box and overflow in ('hidden', 'scroll'):
@@ -528,7 +569,7 @@ class SVG:
                     self.stream.pop_state()
                     self.stream.clip()
 
-                self.draw_node(child, font_size)
+                self.draw_node(child, font_size, fill_stroke)
                 self.stream.pop_state()
 
         position = 'mid' if angles else 'start'
@@ -579,10 +620,12 @@ class SVG:
         stroke_width = self.length(node.get('stroke-width', '1px'), font_size)
         if stroke_width:
             self.stream.set_line_width(stroke_width)
+        else:
+            stroke = None
 
         # Apply dash array
         dash_array = tuple(
-            float(value) for value in
+            self.length(value, font_size) for value in
             normalize(node.get('stroke-dasharray')).split() if value != 'none')
         dash_condition = (
             dash_array and
@@ -648,13 +691,9 @@ class SVG:
         if not transform_string:
             return
 
-        matrix = transform(
-            transform_string, font_size, self.normalized_diagonal)
+        matrix = transform(transform_string, font_size, self.inner_diagonal)
         if matrix.determinant:
-            self.stream.transform(
-                matrix[0][0], matrix[0][1],
-                matrix[1][0], matrix[1][1],
-                matrix[2][0], matrix[2][1])
+            self.stream.transform(*matrix.values)
 
     def parse_defs(self, node):
         """Parse defs included in a tree."""
@@ -690,9 +729,9 @@ class Pattern(SVG):
         self.patterns = {}
         self.paths = {}
 
-    def draw_node(self, node, font_size):
+    def draw_node(self, node, font_size, fill_stroke=True):
         # Store the original tree in self.tree when calling draw(), so that we
         # can reach defs outside the pattern
         if node == self.tree:
             self.tree = self.svg.tree
-        super().draw_node(node, font_size)
+        super().draw_node(node, font_size, fill_stroke=True)

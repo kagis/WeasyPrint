@@ -51,20 +51,16 @@ def text(svg, node, font_size):
     # Get rotations and translations
     x, y, dx, dy, rotate = [], [], [], [], [0]
     if 'x' in node.attrib:
-        x = [size(i, font_size, svg.concrete_width)
+        x = [size(i, font_size, svg.inner_width)
              for i in normalize(node.attrib['x']).strip().split(' ')]
-        if len(x) == 1:
-            x = []
     if 'y' in node.attrib:
-        y = [size(i, font_size, svg.concrete_height)
+        y = [size(i, font_size, svg.inner_height)
              for i in normalize(node.attrib['y']).strip().split(' ')]
-        if len(y) == 1:
-            y = []
     if 'dx' in node.attrib:
-        dx = [size(i, font_size, svg.concrete_width)
+        dx = [size(i, font_size, svg.inner_width)
               for i in normalize(node.attrib['dx']).strip().split(' ')]
     if 'dy' in node.attrib:
-        dy = [size(i, font_size, svg.concrete_height)
+        dy = [size(i, font_size, svg.inner_height)
               for i in normalize(node.attrib['dy']).strip().split(' ')]
     if 'rotate' in node.attrib:
         rotate = [radians(float(i)) if i else 0
@@ -102,20 +98,14 @@ def text(svg, node, font_size):
         y_align = -y_bearing
     elif display_anchor == 'bottom':
         y_align = -height - y_bearing
-    elif (alignment_baseline == 'central' or
-          alignment_baseline == 'middle'):
+    elif alignment_baseline in ('central', 'middle'):
         # TODO: This is wrong, we use font top-to-bottom
         y_align = (ascent + descent) / 2 - descent
-    elif (alignment_baseline == 'text-before-edge' or
-          alignment_baseline == 'before_edge' or
-          alignment_baseline == 'top' or
-          alignment_baseline == 'hanging' or
-          alignment_baseline == 'text-top'):
+    elif alignment_baseline in (
+            'text-before-edge', 'before_edge', 'top', 'hanging', 'text-top'):
         y_align = ascent
-    elif (alignment_baseline == 'text-after-edge' or
-          alignment_baseline == 'after_edge' or
-          alignment_baseline == 'bottom' or
-          alignment_baseline == 'text-bottom'):
+    elif alignment_baseline in (
+            'text-after-edge', 'after_edge', 'bottom', 'text-bottom'):
         y_align = -descent
 
     # Set bounding box
@@ -153,10 +143,10 @@ def text(svg, node, font_size):
         cursor_position = x + width, y
         angle = last_r if r is None else r
         if angle:
-            svg.stream.transform(1, 0, 0, 1, x_position, y_position)
+            svg.stream.transform(e=x_position, f=y_position)
             svg.stream.transform(
-                cos(angle), sin(angle), -sin(angle), cos(angle), 0, 0)
-            svg.stream.transform(1, 0, 0, 1, -x_position, -y_position)
+                a=cos(angle), b=sin(angle), c=-sin(angle), d=cos(angle))
+            svg.stream.transform(e=-x_position, f=-y_position)
         points = (
             (cursor_position[0] + x_align +
              svg.cursor_d_position[0],
@@ -172,7 +162,7 @@ def text(svg, node, font_size):
         svg.fill_stroke(node, font_size, text=True)
         draw_first_line(
             svg.stream, TextBox(layout, style), 'none', 'none',
-            x + svg.cursor_d_position[0], y + svg.cursor_d_position[1])
+            x_position, y_position)
         svg.stream.pop_state()
         svg.cursor_position = cursor_position
 

@@ -19,7 +19,7 @@ def use(svg, node, font_size):
     """Draw use tags."""
     from . import NOT_INHERITED_ATTRIBUTES, SVG
 
-    svg.stream.push_state()
+    x, y = svg.point(node.get('x'), node.get('y'), font_size)
 
     for attribute in ('x', 'y', 'viewBox', 'mask'):
         if attribute in node.attrib:
@@ -27,14 +27,16 @@ def use(svg, node, font_size):
 
     parsed_url = parse_url(node.get_href())
     if parsed_url.fragment and not parsed_url.path:
-        tree = svg.tree.get_child(parsed_url.fragment).copy()
+        try:
+            tree = svg.tree.get_child(parsed_url.fragment).copy()
+        except AttributeError:
+            return
     else:
         url = parsed_url.geturl()
         try:
             bytestring_svg = svg.url_fetcher(url)
             use_svg = SVG(bytestring_svg, url)
         except TypeError:
-            svg.stream.restore()
             return
         else:
             use_svg.get_intrinsic_size(font_size)
@@ -43,10 +45,10 @@ def use(svg, node, font_size):
     if tree.tag in ('svg', 'symbol'):
         # Explicitely specified
         # http://www.w3.org/TR/SVG11/struct.html#UseElement
-        tree.tag = 'svg'
+        tree._etree_node.tag = 'svg'
         if 'width' in node.attrib and 'height' in node.attrib:
-            tree.attrib['width'] = node['width']
-            tree.attrib['height'] = node['height']
+            tree.attrib['width'] = node.attrib['width']
+            tree.attrib['height'] = node.attrib['height']
 
     # Cascade
     for key, value in node.attrib.items():
@@ -54,6 +56,8 @@ def use(svg, node, font_size):
             if key not in tree.attrib:
                 tree.attrib[key] = value
 
+    svg.stream.push_state()
+    svg.stream.transform(e=x, f=y)
     svg.draw_node(tree, font_size)
     svg.stream.pop_state()
 
@@ -99,19 +103,21 @@ def draw_gradient(svg, node, gradient, font_size, opacity, stroke):
     if not is_valid_bounding_box(bounding_box):
         return False
     x, y = bounding_box[0], bounding_box[1]
-    node_x, node_y = svg.point(node.get('x'), node.get('y'), font_size)
-    matrix = Matrix()
+    matrix = Matrix(e=x, f=y)
     if gradient.get('gradientUnits') == 'userSpaceOnUse':
-        viewbox = svg.get_viewbox()
-        if viewbox:
-            width, height = viewbox[2], viewbox[3]
-        else:
-            width, height = svg.concrete_width, svg.concrete_height
+        width, height = svg.inner_width, svg.inner_height
     else:
         width, height = bounding_box[2], bounding_box[3]
 
     spread = gradient.get('spreadMethod', 'pad')
-    if spread not in ('repeat', 'reflect'):
+    if spread in ('repeat', 'reflect'):
+        if positions[0] > 0:
+            positions.insert(0, 0)
+            colors.insert(0, colors[0])
+        if positions[-1] < 1:
+            positions.append(1)
+            colors.append(colors[-1])
+    else:
         # Add explicit colors at boundaries if needed, because PDF doesn’t
         # extend color stops that are not displayed
         if positions[0] == positions[1]:
@@ -204,14 +210,8 @@ def draw_gradient(svg, node, gradient, font_size, opacity, stroke):
             svg.normalized_diagonal)
         matrix = transform_matrix @ matrix
 
-    a, b, c, d, e, f = matrix.values
-    width /= a
-    height /= d
-    pattern_x = e / a
-    pattern_y = f / d
-    matrix = Matrix(e=x - node_x, f=y - node_y) @ matrix @ svg.stream.ctm
-    pattern = svg.stream.add_pattern(
-        -pattern_x, -pattern_y, width, height, width, height, matrix)
+    matrix = matrix @ svg.stream.ctm
+    pattern = svg.stream.add_pattern(width, height, width, height, matrix)
     group = pattern.add_group([0, 0, width, height])
 
     shading = group.add_shading()
@@ -459,14 +459,9 @@ def draw_pattern(svg, node, pattern, font_size, opacity, stroke):
     if not is_valid_bounding_box(bounding_box):
         return False
     x, y = bounding_box[0], bounding_box[1]
-    node_x, node_y = svg.point(node.get('x'), node.get('y'), font_size)
-    matrix = Matrix()
+    matrix = Matrix(e=x, f=y)
     if pattern.get('patternUnits') == 'userSpaceOnUse':
-        viewbox = svg.get_viewbox()
-        if viewbox:
-            width, height = viewbox[2], viewbox[3]
-        else:
-            width, height = svg.concrete_width, svg.concrete_height
+        width, height = svg.inner_width, svg.inner_height
     else:
         width, height = bounding_box[2], bounding_box[3]
 
@@ -494,19 +489,12 @@ def draw_pattern(svg, node, pattern, font_size, opacity, stroke):
 
     if 'patternTransform' in pattern.attrib:
         transform_matrix = transform(
-            pattern.get('patternTransform'), font_size,
-            svg.normalized_diagonal)
+            pattern.get('patternTransform'), font_size, svg.inner_diagonal)
         matrix = transform_matrix @ matrix
 
-    a, b, c, d, e, f = matrix.values
-    width /= a
-    height /= d
-    pattern_x = e / a
-    pattern_y = f / d
-    matrix = Matrix(e=x - node_x, f=y - node_y) @ matrix @ svg.stream.ctm
+    matrix = matrix @ svg.stream.ctm
     stream_pattern = svg.stream.add_pattern(
-        -pattern_x, -pattern_y, pattern_width, pattern_height,
-        pattern_width, pattern_height, matrix)
+        pattern_width, pattern_height, pattern_width, pattern_height, matrix)
     stream_pattern.set_alpha(opacity)
 
     group = stream_pattern.add_group([0, 0, pattern_width, pattern_height])
@@ -534,7 +522,7 @@ def apply_filters(svg, node, filter_node, font_size):
             else:
                 dx, dy = svg.point(
                     child.get('dx', 0), child.get('dy', 0), font_size)
-            svg.stream.transform(1, 0, 0, 1, dx, dy)
+            svg.stream.transform(e=dx, f=dy)
         elif child.tag == 'feBlend':
             mode = child.get('mode', 'normal')
             mode = mode.replace('-', ' ').title().replace(' ', '')
@@ -542,7 +530,7 @@ def apply_filters(svg, node, filter_node, font_size):
                 'Type': '/ExtGState',
                 'BM': f'/{mode}',
             })
-            svg.stream.set_group(blend_mode)
+            svg.stream.set_state(blend_mode)
 
 
 def paint_mask(svg, node, mask, font_size):
@@ -550,10 +538,9 @@ def paint_mask(svg, node, mask, font_size):
     mask._etree_node.tag = 'g'
 
     if mask.get('maskUnits') == 'userSpaceOnUse':
-        width_ref, height_ref = svg.concrete_width, svg.concrete_height
+        width_ref, height_ref = svg.inner_width, svg.inner_height
     else:
-        x, y = svg.point(node.get('x'), node.get('y'), font_size)
-        width, height = width_ref, height_ref = svg.point(
+        width_ref, height_ref = svg.point(
             node.get('width'), node.get('height'), font_size)
 
     mask.attrib['x'] = size(mask.get('x', '-10%'), font_size, width_ref)
@@ -567,6 +554,9 @@ def paint_mask(svg, node, mask, font_size):
         x, y = mask.get('x'), mask.get('y')
         width, height = mask.get('width'), mask.get('height')
         mask.attrib['viewBox'] = f'{x} {y} {width} {height}'
+    else:
+        x, y = 0, 0
+        width, height = width_ref, height_ref
 
     alpha_stream = svg.stream.add_group([x, y, width, height])
     state = pydyf.Dictionary({
@@ -585,3 +575,9 @@ def paint_mask(svg, node, mask, font_size):
     svg.stream = alpha_stream
     svg.draw_node(mask, font_size)
     svg.stream = svg_stream
+
+
+def clip_path(svg, node, font_size):
+    """Store a clip path definition."""
+    if 'id' in node.attrib:
+        svg.paths[node.attrib['id']] = node

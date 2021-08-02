@@ -13,6 +13,10 @@ from urllib.parse import urlparse
 from tinycss2.color3 import parse_color
 
 
+class PointError(Exception):
+    """Exception raised when parsing a point fails."""
+
+
 def normalize(string):
     """Give a canonical version of a given value string."""
     string = (string or '').replace('E', 'e')
@@ -58,21 +62,22 @@ def size(string, font_size=None, percentage_reference=None):
 def point(svg, string, font_size):
     """Pop first two size values from a string."""
     match = re.match('(.*?) (.*?)(?: |$)', string)
-    x, y = match.group(1, 2)
-    string = string[match.end():]
-    return (*svg.point(x, y, font_size), string)
+    if match:
+        x, y = match.group(1, 2)
+        string = string[match.end():]
+        return (*svg.point(x, y, font_size), string)
+    else:
+        raise PointError
 
 
-def preserve_ratio(svg, node, font_size, width, height):
+def preserve_ratio(svg, node, font_size, width, height, viewbox=None):
     """Compute scale and translation needed to preserve ratio."""
-    viewbox = node.get_viewbox()
+    viewbox = viewbox or node.get_viewbox()
     if viewbox:
         viewbox_width, viewbox_height = viewbox[2:]
     else:
         return 1, 1, 0, 0
 
-    translate_x = 0
-    translate_y = 0
     scale_x = width / viewbox_width if viewbox_width else 1
     scale_y = height / viewbox_height if viewbox_height else 1
 
@@ -106,6 +111,9 @@ def preserve_ratio(svg, node, font_size, width, height):
             translate_y += (height - viewbox_height * scale_y) / 2
         elif y_position == 'max':
             translate_y += height - viewbox_height * scale_y
+
+    translate_x -= viewbox[0] * scale_x
+    translate_y -= viewbox[1] * scale_y
 
     return scale_x, scale_y, translate_x, translate_y
 
