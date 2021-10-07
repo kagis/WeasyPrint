@@ -268,6 +268,18 @@ def test_bookmarks_11():
 
 
 @assert_no_logs
+def test_bookmarks_12():
+    pdf = FakeHTML(string='''
+      <div style="bookmark-level:1; bookmark-label:contents">a</div>
+    ''').write_pdf()
+    # a
+    counts = re.findall(b'/Count ([0-9-]*)', pdf)
+    outlines = counts.pop()
+    assert outlines == b'1'
+    assert re.findall(b'/Title \\((.*)\\)', pdf) == [b'a']
+
+
+@assert_no_logs
 def test_links_none():
     pdf = FakeHTML(string='<body>').write_pdf()
     assert b'Annots' not in pdf
@@ -447,6 +459,19 @@ def test_embed_jpeg():
     assert b'/Filter /DCTDecode' in FakeHTML(
         base_url=resource_filename('dummy.html'),
         string='<img src="blue.jpg">').write_pdf()
+
+
+@assert_no_logs
+def test_embed_image_once():
+    # Image repeated multiple times, embedded once
+    assert FakeHTML(
+        base_url=resource_filename('dummy.html'),
+        string='''
+          <img src="blue.jpg">
+          <div style="background: url(blue.jpg)"></div>
+          <img src="blue.jpg">
+          <div style="background: url(blue.jpg) no-repeat"></div>
+        ''').write_pdf().count(b'/Filter /DCTDecode') == 1
 
 
 @assert_no_logs

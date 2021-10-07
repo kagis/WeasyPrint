@@ -115,7 +115,7 @@ class Font:
 class Stream(pydyf.Stream):
     """PDF stream object with context storing alpha states."""
     def __init__(self, document, page_rectangle, states, x_objects, patterns,
-                 shadings, *args, **kwargs):
+                 shadings, images, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.compress = True
         self.page_rectangle = page_rectangle
@@ -124,6 +124,7 @@ class Stream(pydyf.Stream):
         self._x_objects = x_objects
         self._patterns = patterns
         self._shadings = shadings
+        self._images = images
         self._current_color = self._current_color_stroke = None
         self._current_alpha = self._current_alpha_stroke = None
         self._current_font = self._current_font_size = None
@@ -247,7 +248,7 @@ class Stream(pydyf.Stream):
         })
         group = Stream(
             self._document, self.page_rectangle, states, x_objects,
-            patterns, shadings, extra=extra)
+            patterns, shadings, self._images, extra=extra)
         group.id = f'x{len(self._x_objects)}'
         self._x_objects[group.id] = group
         return group
@@ -267,8 +268,9 @@ class Stream(pydyf.Stream):
 
     def add_image(self, pillow_image, image_rendering, optimize_size):
         image_name = f'i{pillow_image.id}'
-        if image_name in self._x_objects:
-            # Reuse image already stored in stream
+        self._x_objects[image_name] = None  # Set by write_pdf
+        if image_name in self._images:
+            # Reuse image already stored in document
             return image_name
 
         if 'transparency' in pillow_image.info:
@@ -322,7 +324,7 @@ class Stream(pydyf.Stream):
         stream = [image_file.getvalue()]
 
         xobject = pydyf.Stream(stream, extra=extra)
-        self._x_objects[image_name] = xobject
+        self._images[image_name] = xobject
         return image_name
 
     def add_pattern(self, width, height, repeat_width, repeat_height, matrix):
@@ -350,7 +352,7 @@ class Stream(pydyf.Stream):
         })
         pattern = Stream(
             self._document, self.page_rectangle, states, x_objects, patterns,
-            shadings, extra=extra)
+            shadings, self._images, extra=extra)
         pattern.id = f'p{len(self._patterns)}'
         self._patterns[pattern.id] = pattern
         return pattern
@@ -906,33 +908,46 @@ class Document:
             html.url_fetcher, font_config, optimize_size)
         return rendering
 
-    def _use_references(self, pdf, resources):
+    def _reference_resources(self, pdf, resources, images, fonts):
+        if 'Font' in resources:
+            assert resources['Font'] is None
+            resources['Font'] = fonts
+        self._use_references(pdf, resources, images)
+        pdf.add_object(resources)
+        return resources.reference
+
+    def _use_references(self, pdf, resources, images):
         # XObjects
         for key, x_object in resources.get('XObject', {}).items():
+            # Images
+            if x_object is None:
+                x_object = images[key]
+                if x_object.number is not None:
+                    # Image already added to PDF
+                    resources['XObject'][key] = x_object.reference
+                    continue
+
             pdf.add_object(x_object)
             resources['XObject'][key] = x_object.reference
+
+            # Masks
             if 'SMask' in x_object.extra:
                 pdf.add_object(x_object.extra['SMask'])
                 x_object.extra['SMask'] = x_object.extra['SMask'].reference
+
+            # Resources
             if 'Resources' in x_object.extra:
-                if 'Font' in x_object.extra['Resources']:
-                    x_object.extra['Resources']['Font'] = resources['Font']
-                self._use_references(pdf, x_object.extra['Resources'])
-                pdf.add_object(x_object.extra['Resources'])
-                x_object.extra['Resources'] = (
-                    x_object.extra['Resources'].reference)
+                x_object.extra['Resources'] = self._reference_resources(
+                    pdf, x_object.extra['Resources'], images,
+                    resources['Font'])
 
         # Patterns
         for key, pattern in resources.get('Pattern', {}).items():
             pdf.add_object(pattern)
             resources['Pattern'][key] = pattern.reference
             if 'Resources' in pattern.extra:
-                if 'Font' in pattern.extra['Resources']:
-                    pattern.extra['Resources']['Font'] = resources['Font']
-                self._use_references(pdf, pattern.extra['Resources'])
-                pdf.add_object(pattern.extra['Resources'])
-                pattern.extra['Resources'] = (
-                    pattern.extra['Resources'].reference)
+                pattern.extra['Resources'] = self._reference_resources(
+                    pdf, pattern.extra['Resources'], images, resources['Font'])
 
         # Shadings
         for key, shading in resources.get('Shading', {}).items():
@@ -1001,6 +1016,64 @@ class Document:
             pages, self.metadata, self.url_fetcher, self._font_config,
             self.optimize_size)
 
+    def make_bookmark_tree(self):
+        """Make a tree of all bookmarks in the document.
+
+        .. versionadded:: 0.15
+
+        :return: A list of bookmark subtrees.
+            A subtree is ``(label, target, children, state)``. ``label`` is
+            a string, ``target`` is ``(page_number, x, y)`` like in
+            :meth:`resolve_links`, and ``children`` is a
+            list of child subtrees.
+
+        """
+        root = []
+        # At one point in the document, for each "output" depth, how much
+        # to add to get the source level (CSS values of bookmark-level).
+        # E.g. with <h1> then <h3>, level_shifts == [0, 1]
+        # 1 means that <h3> has depth 3 - 1 = 2 in the output.
+        skipped_levels = []
+        last_by_depth = [root]
+        previous_level = 0
+        matrix = Matrix()
+        for page_number, page in enumerate(self.pages):
+            previous_level = self._make_page_bookmark_tree(
+                page, skipped_levels, last_by_depth, previous_level,
+                page_number, matrix)
+        return root
+
+    def _make_page_bookmark_tree(self, page, skipped_levels, last_by_depth,
+                                 previous_level, page_number, matrix):
+        """Make a tree of all bookmarks in a given page."""
+        for level, label, (point_x, point_y), state in page.bookmarks:
+            if level > previous_level:
+                # Example: if the previous bookmark is a <h2>, the next
+                # depth "should" be for <h3>. If now we get a <h6> we’re
+                # skipping two levels: append 6 - 3 - 1 = 2
+                skipped_levels.append(level - previous_level - 1)
+            else:
+                temp = level
+                while temp < previous_level:
+                    temp += 1 + skipped_levels.pop()
+                if temp > previous_level:
+                    # We remove too many "skips", add some back:
+                    skipped_levels.append(temp - previous_level - 1)
+
+            previous_level = level
+            depth = level - sum(skipped_levels)
+            assert depth == len(skipped_levels)
+            assert depth >= 1
+
+            children = []
+            point_x, point_y = matrix.transform_point(point_x, point_y)
+            subtree = BookmarkSubtree(
+                label, (page_number, point_x, point_y), children, state)
+            last_by_depth[depth - 1].append(subtree)
+            del last_by_depth[depth:]
+            last_by_depth.append(children)
+        return previous_level
+
     def write_pdf(self, target=None, zoom=1, attachments=None, finisher=None):
         """Paint the pages in a PDF file, with metadata.
 
@@ -1036,6 +1109,7 @@ class Document:
         x_objects = pydyf.Dictionary()
         patterns = pydyf.Dictionary()
         shadings = pydyf.Dictionary()
+        images = {}
         resources = pydyf.Dictionary({
             'ExtGState': states,
             'XObject': x_objects,
@@ -1099,7 +1173,8 @@ class Document:
             page_rectangle = (
                 left / scale, top / scale, right / scale, bottom / scale)
             stream = Stream(
-                self, page_rectangle, states, x_objects, patterns, shadings)
+                self, page_rectangle, states, x_objects, patterns, shadings,
+                images)
             stream.transform(d=-1, f=(page.height * scale))
             page.paint(stream, scale=scale)
             pdf.add_object(stream)
@@ -1168,32 +1243,9 @@ class Document:
                     pdf_page['Annots'].append(annot.reference)
 
             # Bookmarks
-            for level, label, (point_x, point_y), state in page.bookmarks:
-                if level > previous_level:
-                    # Example: if the previous bookmark is a <h2>, the next
-                    # depth "should" be for <h3>. If now we get a <h6> we’re
-                    # skipping two levels: append 6 - 3 - 1 = 2
-                    skipped_levels.append(level - previous_level - 1)
-                else:
-                    temp = level
-                    while temp < previous_level:
-                        temp += 1 + skipped_levels.pop()
-                    if temp > previous_level:
-                        # We remove too many "skips", add some back:
-                        skipped_levels.append(temp - previous_level - 1)
-
-                previous_level = level
-                depth = level - sum(skipped_levels)
-                assert depth == len(skipped_levels)
-                assert depth >= 1
-
-                children = []
-                point_x, point_y = matrix.transform_point(point_x, point_y)
-                subtree = BookmarkSubtree(
-                    label, (page_number, point_x, point_y), children, state)
-                last_by_depth[depth - 1].append(subtree)
-                del last_by_depth[depth:]
-                last_by_depth.append(children)
+            previous_level = self._make_page_bookmark_tree(
+                page, skipped_levels, last_by_depth, previous_level,
+                page_number, matrix)
 
             # geocodings
             for geocoding in page_geocoding:
@@ -1419,7 +1471,7 @@ class Document:
 
         pdf.add_object(pdf_fonts)
         resources['Font'] = pdf_fonts.reference
-        self._use_references(pdf, resources)
+        self._use_references(pdf, resources, images)
 
         # Anchors
         if pdf_names:
