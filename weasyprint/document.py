@@ -1322,7 +1322,7 @@ class Document:
                 })
                 pdf.add_object(ocg_dictionary)
                 ocg_control_references.append(ocg_dictionary.reference)
-                resources['XObject'][id].extra['OC'] = ocg_dictionary.reference
+                images[id].extra['OC'] = ocg_dictionary.reference
         
         if ocg_control_references:
             pdf.catalog['OCProperties'] = pydyf.Dictionary({
