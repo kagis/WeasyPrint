@@ -14,7 +14,7 @@ from ..logger import LOGGER
 from ..text.ffi import ffi, gobject, pango
 from ..text.fonts import get_font_description
 from ..urls import URLFetchingError
-
+from ..wkt import get_wkt_from_epsg
 
 def add_links(links_and_anchors, matrix, pdf, page, names, tags):
     """Include hyperlinks in given PDF page."""
@@ -326,6 +326,36 @@ def add_annotations(links, matrix, document, pdf, page, annot_files, compress):
         page['Annots'].append(annot.reference)
 
 
+def add_geocodings(page_geocoding, matrix, pdf, page):
+    for geocoding in page_geocoding:
+        rec, bounding_box, epsg = geocoding
+        size = (rec[0] + rec[2], rec[1] + rec[3])
+        rec = (
+                *matrix.transform_point(*rec[:2]),
+                *matrix.transform_point(*size))
+        bbox = pydyf.Dictionary({
+            'BBox': pydyf.Array(rec),
+            'Measure': pydyf.Dictionary({
+                'Bounds': '[ 0 1 0 0 1 0 1 1 ]',
+                'GCS': pydyf.Dictionary({
+                    'EPSG': epsg,
+                    'Type': '/GEOGCS',
+                    'WKT': '({wkt})'.format(wkt = get_wkt_from_epsg(epsg)),
+                }),
+                'GPTS': '[ {0:f} {1:f} {0:f} {3:f} {2:f} {3:f} {2:f} {1:f} ]'.format(*bounding_box),
+                'LPTS': '[ 0 1 0 0 1 0 1 1 ]',
+                'Subtype': '/GEO',
+                'Type': '/Measure'
+            }),
+            'Name': '(Layer)',
+            'Type': '/Viewport',
+        })
+        pdf.add_object(bbox)
+        if 'VP' not in page:
+            page['VP'] = pydyf.Array()
+        page['VP'].append(bbox.reference)
+
+
 def write_pdf_attachment(pdf, attachment, compress):
     """Write an attachment to the PDF stream."""
     # Attachments from document links like <link> or <a> can only be URLs.
@@ -424,3 +454,10 @@ def resolve_links(pages):
                 # External link
                 page_links.append(link)
         yield page_links, paged_anchors.pop(0)
+
+def resolve_geocodings(pages):
+    for page in pages:
+        page_geocodings = []
+        for geocoding in page.geocodings:
+            page_geocodings.append(geocoding)
+        yield page_geocodings

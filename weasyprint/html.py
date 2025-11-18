@@ -217,6 +217,18 @@ def handle_svg(element, box, get_image_from_uri, base_url):
     else:
         return [make_replaced_box(element, box, image)]
 
+@handler('div')
+def handle_div(element, box, _get_image_from_uri, _base_url):
+    """Handle the ``div`` element."""
+    bbox = element.get('data-viewport-bounding-box')
+    epsg = element.get('data-epsg')
+
+    if bbox is not None and epsg is not None:
+        box.is_for_geocoding_bbox = True
+        xmin, ymin, xmax, ymax = [float(i) for i in bbox.strip().split(" ")]
+        box.bounding_box = [xmin, ymin, xmax, ymax]
+        box.epsg = epsg
+    return [box]
 
 def get_html_metadata(html):
     """Get metadata dictionary out of HTML object.

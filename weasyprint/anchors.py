@@ -27,7 +27,7 @@ def rectangle_aabb(matrix, pos_x, pos_y, width, height):
     return box_x1, box_y1, box_x2, box_y2
 
 
-def gather_anchors(box, anchors, links, bookmarks, forms, parent_matrix=None,
+def gather_anchors(box, anchors, links, bookmarks, forms, geocodings, parent_matrix=None,
                    parent_form=None):
     """Gather anchors and other data related to specific positions in PDF.
 
@@ -95,7 +95,7 @@ def gather_anchors(box, anchors, links, bookmarks, forms, parent_matrix=None,
         if parent_form not in forms:
             forms[parent_form] = []
 
-    if has_bookmark or has_link or has_anchor or is_input:
+    if has_bookmark or has_link or has_anchor or is_input or box.is_for_geocoding_bbox:
         if is_input:
             pos_x, pos_y = box.content_box_x(), box.content_box_y()
             width, height = box.width, box.height
@@ -124,9 +124,16 @@ def gather_anchors(box, anchors, links, bookmarks, forms, parent_matrix=None,
                 pos_x1, pos_y1 = matrix.transform_point(pos_x1, pos_y1)
                 pos_x2, pos_y2 = matrix.transform_point(pos_x2, pos_y2)
             anchors[anchor_name] = (pos_x1, pos_y1, pos_x2, pos_y2)
+        if box.is_for_geocoding_bbox:
+            pos_x, pos_y, width, height = box.geocoding_content_area()
+            if matrix:
+                geocoding = (rectangle_aabb(matrix, pos_x, pos_y, width, height), box.bounding_box, box.epsg)
+            else:
+                geocoding = ((pos_x, pos_y, width, height), box.bounding_box, box.epsg)
+            geocodings.append(geocoding)
 
     for child in box.all_children():
-        gather_anchors(child, anchors, links, bookmarks, forms, matrix, parent_form)
+        gather_anchors(child, anchors, links, bookmarks, forms, geocodings, matrix, parent_form)
 
 
 def make_page_bookmark_tree(page, skipped_levels, last_by_depth,

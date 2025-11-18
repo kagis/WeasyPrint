@@ -84,9 +84,18 @@ class Box:
     link_annotation = None
     force_fragmentation = False
 
+    #geocoding box
+    is_for_geocoding_bbox = False
+    bounding_box = None
+    epsg = None
+
     # Default, overriden on some subclasses
     def all_children(self):
         return self.children
+    
+    def geocoding_content_area(self):
+        return (self.position_x + self.margin_left + self.border_left_width,
+            self.position_y + self.margin_top + self.border_top_width, self.width, self.height)
 
     def descendants(self, placeholders=False):
         """A flat generator for a box, its children and descendants."""

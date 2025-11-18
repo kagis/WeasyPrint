@@ -16,7 +16,7 @@ from .tags import add_tags
 
 from .anchors import (  # isort:skip
     add_annotations, add_forms, add_links, add_outlines, resolve_links,
-    write_pdf_attachment)
+    resolve_geocodings, add_geocodings, write_pdf_attachment)
 
 VARIANTS = {
     name: data for variants in (pdfa.VARIANTS, pdfua.VARIANTS, debug.VARIANTS)
@@ -155,11 +155,14 @@ def generate_pdf(document, target, zoom, **options):
     # Links and anchors
     page_links_and_anchors = list(resolve_links(document.pages))
 
+    # Gather geocodings by page
+    paged_geocodings = list(resolve_geocodings(document.pages))
+
     annot_files = {}
     pdf_pages, page_streams = [], []
     compress = not options['uncompressed_pdf']
-    for page_number, (page, links_and_anchors) in enumerate(
-            zip(document.pages, page_links_and_anchors)):
+    for page_number, (page, links_and_anchors, paged_geocoding) in enumerate(
+            zip(document.pages, page_links_and_anchors, paged_geocodings)):
         tags = {} if pdf_tags else None
 
         # Draw from the top-left corner
@@ -203,6 +206,7 @@ def generate_pdf(document, target, zoom, **options):
         add_forms(
             page.forms, matrix, pdf, pdf_page, resources, stream,
             document.font_config.font_map)
+        add_geocodings(paged_geocoding, matrix, pdf, pdf_page)
         page.paint(stream, scale)
 
         # Bleed
