@@ -7,3 +7,6 @@
 /pytest_cache
 /tests/draw/results
 /venv
+.DS_Store
+/tests
+.vscode
