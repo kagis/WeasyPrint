@@ -10,12 +10,12 @@ from urllib.parse import unquote, urlsplit
 import pydyf
 
 from .. import Attachment
+from ..geo import COORDINATE_SYSTEMS
 from ..html import parse_url
 from ..logger import LOGGER
 from ..text.ffi import ffi, gobject, pango
 from ..text.fonts import get_font_description
 from ..urls import URLFetchingError
-from ..wkt import get_wkt_from_epsg
 
 # Mimetypes datastore with only types registered in the stdlib.
 MIMETYPES = mimetypes.MimeTypes()
@@ -371,36 +371,60 @@ def add_annotations(links, matrix, document, pdf, page, annot_files, compress):
 
 
 def add_geocodings(page_geocoding, matrix, pdf, page):
-    """Include GeoPDF viewports (``/VP``) in given PDF page."""
-    for geocoding in page_geocoding:
-        rec, bounding_box, epsg = geocoding
-        size = (rec[0] + rec[2], rec[1] + rec[3])
-        rec = (
-            *matrix.transform_point(*rec[:2]),
-            *matrix.transform_point(*size))
-        gpts = '[ {0:f} {1:f} {0:f} {3:f} {2:f} {3:f} {2:f} {1:f} ]'.format(
-            *bounding_box)
-        bbox = pydyf.Dictionary({
-            'BBox': pydyf.Array(rec),
-            'Measure': pydyf.Dictionary({
-                'Bounds': '[ 0 1 0 0 1 0 1 1 ]',
-                'GCS': pydyf.Dictionary({
-                    'EPSG': epsg,
-                    'Type': '/GEOGCS',
-                    'WKT': f'({get_wkt_from_epsg(epsg)})',
-                }),
-                'GPTS': gpts,
-                'LPTS': '[ 0 1 0 0 1 0 1 1 ]',
-                'Subtype': '/GEO',
-                'Type': '/Measure'
-            }),
-            'Name': '(Layer)',
+    """Include GeoPDF viewports (``/VP``) in given PDF page.
+
+    See section 8.8.1 of the Adobe Supplement to ISO 32000 (ExtensionLevel 3)
+    and section 12.8.6 of ISO 32000-2.
+
+    """
+    for rectangle, bounding_box, epsg in page_geocoding:
+        x, y, width, height = rectangle
+        x1, y1 = matrix.transform_point(x, y)
+        x2, y2 = matrix.transform_point(x + width, y + height)
+        bbox = (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+
+        # GPTS points are (latitude, longitude) degrees, whatever the
+        # coordinate system of the bounding box is. They are given for the
+        # upper-left, lower-left, lower-right and upper-right corners, matching
+        # the LPTS points in the unit square of the viewport.
+        cs_type, wkt, to_geographic = COORDINATE_SYSTEMS[epsg]
+        xmin, ymin, xmax, ymax = bounding_box
+        corners = ((xmin, ymax), (xmin, ymin), (xmax, ymin), (xmax, ymax))
+        gpts = pydyf.Array()
+        for corner_x, corner_y in corners:
+            longitude, latitude = to_geographic(corner_x, corner_y)
+            gpts.extend((latitude, longitude))
+
+        viewport = pydyf.Dictionary({
             'Type': '/Viewport',
+            'BBox': pydyf.Array(bbox),
+            'Name': pydyf.String('Layer'),
+            'Measure': pydyf.Dictionary({
+                'Type': '/Measure',
+                'Subtype': '/GEO',
+                'Bounds': pydyf.Array((0, 1, 0, 0, 1, 0, 1, 1)),
+                'GPTS': gpts,
+                'LPTS': pydyf.Array((0, 1, 0, 0, 1, 0, 1, 1)),
+                'GCS': pydyf.Dictionary({
+                    'Type': f'/{cs_type}',
+                    'EPSG': epsg,
+                    'WKT': pydyf.String(wkt),
+                }),
+            }),
         })
-        pdf.add_object(bbox)
+        pdf.add_object(viewport)
         if 'VP' not in page:
             page['VP'] = pydyf.Array()
-        page['VP'].append(bbox.reference)
+        page['VP'].append(viewport.reference)
+
+    if page_geocoding and 'Extensions' not in pdf.catalog:
+        # Geospatial features are an Adobe extension to PDF 1.7.
+        pdf.catalog['Extensions'] = pydyf.Dictionary({
+            'ADBE': pydyf.Dictionary({
+                'BaseVersion': '/1.7',
+                'ExtensionLevel': 3,
+            }),
+        })
 
 
 def write_pdf_attachment(pdf, attachment, compress):

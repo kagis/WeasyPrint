@@ -126,10 +126,8 @@ def gather_anchors(box, anchors, links, bookmarks, forms, geocodings,
             anchors[anchor_name] = (pos_x1, pos_y1, pos_x2, pos_y2)
         if box.is_for_geocoding_bbox:
             pos_x, pos_y, width, height = box.geocoding_content_area()
-            if matrix:
-                rectangle = rectangle_aabb(matrix, pos_x, pos_y, width, height)
-            else:
-                rectangle = (pos_x, pos_y, width, height)
+            x1, y1, x2, y2 = rectangle_aabb(matrix, pos_x, pos_y, width, height)
+            rectangle = (x1, y1, x2 - x1, y2 - y1)
             geocodings.append((rectangle, box.bounding_box, box.epsg))
 
     for child in box.all_children():

@@ -16,6 +16,7 @@ from . import CSS, Attachment, css
 from .css import get_child_text
 from .css.counters import CounterStyle
 from .formatting_structure import boxes
+from .geo import COORDINATE_SYSTEMS
 from .images import SVGImage
 from .logger import LOGGER
 from .urls import get_link, url_join
@@ -311,15 +312,35 @@ def handle_svg(element, box, get_image_from_uri, base_url):
 
 @handler('div')
 def handle_div(element, box, _get_image_from_uri, _base_url):
-    """Handle ``<div>`` elements carrying GeoPDF viewport data attributes."""
+    """Handle ``<div>`` elements carrying GeoPDF viewport data attributes.
+
+    ``data-viewport-bounding-box`` is ``"xmin ymin xmax ymax"`` expressed in
+    the coordinate system given by ``data-epsg``: longitude and latitude
+    degrees for EPSG:4326, metres for EPSG:3857.
+
+    """
     bbox = element.get('data-viewport-bounding-box')
     epsg = element.get('data-epsg')
+    if bbox is None or epsg is None:
+        return [box]
 
-    if bbox is not None and epsg is not None:
-        box.is_for_geocoding_bbox = True
-        xmin, ymin, xmax, ymax = [float(i) for i in bbox.strip().split(' ')]
-        box.bounding_box = [xmin, ymin, xmax, ymax]
-        box.epsg = epsg
+    try:
+        xmin, ymin, xmax, ymax = (float(value) for value in bbox.split())
+        epsg = int(epsg.strip().upper().removeprefix('EPSG:'))
+    except ValueError:
+        LOGGER.warning(
+            'Ignored invalid GeoPDF viewport attributes: '
+            'data-viewport-bounding-box=%r data-epsg=%r', bbox, epsg)
+        return [box]
+    if epsg not in COORDINATE_SYSTEMS:
+        LOGGER.warning(
+            'Ignored GeoPDF viewport with unsupported EPSG code %s, '
+            'supported codes are %s', epsg, sorted(COORDINATE_SYSTEMS))
+        return [box]
+
+    box.is_for_geocoding_bbox = True
+    box.bounding_box = (xmin, ymin, xmax, ymax)
+    box.epsg = epsg
     return [box]
 
 

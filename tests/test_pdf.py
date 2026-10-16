@@ -967,13 +967,15 @@ def test_debug_variant():
 @assert_no_logs
 def test_geopdf_viewports():
     # GeoPDF viewports are built from <div> elements with
-    # data-viewport-bounding-box and data-epsg attributes.
+    # data-viewport-bounding-box and data-epsg attributes. Bounding boxes are
+    # "xmin ymin xmax ymax": degrees for EPSG:4326, metres for EPSG:3857.
     pdf = FakeHTML(string='''
       <style>@page { size: 100pt 100pt; margin: 0 } body { margin: 0 }</style>
       <div style="width: 40px; height: 30px; margin: 10px"
            data-viewport-bounding-box="10 20 30 40" data-epsg="4326"></div>
       <div style="width: 10px; height: 10px"
-           data-viewport-bounding-box="1 2 3 4" data-epsg="3857"></div>
+           data-viewport-bounding-box="0 0 1113194.9079 1118889.9749"
+           data-epsg="EPSG:3857"></div>
       <div>no geodata</div>
     ''').write_pdf(uncompressed_pdf=True)
 
@@ -981,17 +983,39 @@ def test_geopdf_viewports():
     assert pdf.count(b'/Type /Measure') == 2
     assert pdf.count(b'/Subtype /GEO') == 2
     assert b'/VP [' in pdf
+    assert b'/Extensions' in pdf
+    assert b'/ExtensionLevel 3' in pdf
+    assert re.findall(b'/Type (/GEOGCS|/PROJCS)', pdf) == [b'/GEOGCS', b'/PROJCS']
     assert b'/EPSG 4326' in pdf
     assert b'/EPSG 3857' in pdf
     assert b'GEOGCS["GCS_WGS_1984"' in pdf
     assert b'PROJCS["WGS_1984_Web_Mercator_Auxiliary_Sphere"' in pdf
+    assert pdf.count(b'/LPTS [0 1 0 0 1 0 1 1]') == 2
+
+    # GPTS are (latitude, longitude) pairs for the upper-left, lower-left,
+    # lower-right and upper-right corners, like the LPTS points.
     gpts = [
         [float(value) for value in points.split()]
         for points in re.findall(b'/GPTS \\[(.*?)\\]', pdf)]
-    assert gpts == [
-        [10, 20, 10, 40, 30, 40, 30, 20], [1, 2, 1, 4, 3, 4, 3, 2]]
+    assert gpts[0] == [40, 10, 20, 10, 20, 30, 40, 30]
+    assert gpts[1] == pytest.approx([10, 0, 0, 0, 0, 10, 10, 10], abs=1e-6)
+
     # 10px margin = 7.5pt, 40x30px = 30x22.5pt, PDF origin is bottom-left.
     bboxes = [
         [float(value) for value in bbox.split()]
         for bbox in re.findall(b'/BBox \\[(.*?)\\]', pdf)]
-    assert bboxes == [[7.5, 92.5, 37.5, 70], [0, 62.5, 7.5, 55]]
+    assert bboxes == [[7.5, 70, 37.5, 92.5], [0, 55, 7.5, 62.5]]
+
+
+def test_geopdf_viewports_invalid():
+    with capture_logs() as logs:
+        pdf = FakeHTML(string='''
+          <div data-viewport-bounding-box="1 2 3" data-epsg="4326"></div>
+          <div data-viewport-bounding-box="1 2 3 4" data-epsg="32642"></div>
+          <div data-viewport-bounding-box="1 2 3 4"></div>
+        ''').write_pdf(uncompressed_pdf=True)
+    assert b'/Viewport' not in pdf
+    assert b'/Extensions' not in pdf
+    assert len(logs) == 2
+    assert 'invalid GeoPDF viewport' in logs[0]
+    assert 'unsupported EPSG code 32642' in logs[1]

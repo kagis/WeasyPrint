@@ -80,8 +80,8 @@ class Page:
         #: The :obj:`list` of ``(rectangle, bounding_box, epsg)``
         #: :obj:`tuples <tuple>` describing GeoPDF viewports. A ``rectangle``
         #: is ``(x, y, width, height)``, in CSS pixels from the top-left of
-        #: the page, ``bounding_box`` is ``[xmin, ymin, xmax, ymax]`` in the
-        #: coordinate system given by the ``epsg`` code.
+        #: the page, ``bounding_box`` is ``(xmin, ymin, xmax, ymax)`` in the
+        #: coordinate system given by the ``epsg`` :obj:`int` code.
         self.geocodings = []
 
         gather_anchors(
