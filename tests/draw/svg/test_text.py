@@ -30,7 +30,7 @@ def test_text_stroke(assert_pixels):
         _BBBBBBBBBBBB_______
     ''', '''
       <style>
-        @page { font-size: 1px; size: 20em 8ex }
+        @page { font-size: 1px; size: 20em 4em }
         svg { display: block }
       </style>
       <svg width="20px" height="4px" xmlns="http://www.w3.org/2000/svg">
@@ -245,6 +245,45 @@ def test_text_anchor_end(assert_pixels):
       <svg width="20px" height="2px" xmlns="http://www.w3.org/2000/svg">
         <text x="18" y="1.5" font-family="weasyprint" font-size="2"
               fill="blue" text-anchor="end">
+          ABC
+        </text>
+      </svg>
+    ''')
+
+
+@assert_no_logs
+def test_text_direction_rtl_anchor_start(assert_pixels):
+    assert_pixels('''
+        ____________BBBBBB__
+        ____________BBBBBB__
+    ''', '''
+      <style>
+        @page { size: 20px 2px }
+        svg { display: block }
+      </style>
+      <svg width="20px" height="2px" direction="rtl"
+           xmlns="http://www.w3.org/2000/svg">
+        <text x="18" y="1.5" font-family="weasyprint" font-size="2"
+              fill="blue">
+          ABC
+        </text>
+      </svg>
+    ''')
+
+
+@assert_no_logs
+def test_text_direction_rtl_anchor_end(assert_pixels):
+    assert_pixels('''
+        __BBBBBB____________
+        __BBBBBB____________
+    ''', '''
+      <style>
+        @page { size: 20px 2px }
+        svg { display: block }
+      </style>
+      <svg width="20px" height="2px" xmlns="http://www.w3.org/2000/svg">
+        <text x="2" y="1.5" font-family="weasyprint" font-size="2"
+              fill="blue" direction="rtl" text-anchor="end">
           ABC
         </text>
       </svg>
@@ -488,6 +527,59 @@ def test_text_length_adjust_glyphs_only(assert_pixels):
 
 
 @assert_no_logs
+def test_text_font_face(assert_pixels):
+    assert_pixels('''
+        BBBBBB__BBBBBB______
+        BBBBBB__BBBBBB______
+    ''', '''
+      <style>
+        @page { size: 20px 2px }
+        svg { display: block }
+      </style>
+      <svg width="20px" height="2px" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <style>
+            @font-face {
+              font-family: "SVGFont";
+              src: url(weasyprint.otf);
+            }
+          </style>
+        </defs>
+        <text x="0" y="1.5" font-family="SVGFont" font-size="2" fill="blue">
+          ABC DEF
+        </text>
+      </svg>
+    ''')
+
+
+@assert_no_logs
+def test_text_font_face_css(assert_pixels):
+    assert_pixels('''
+        BBBBBB__BBBBBB______
+        BBBBBB__BBBBBB______
+    ''', '''
+      <style>
+        @page { size: 20px 2px }
+        svg { display: block }
+      </style>
+      <svg width="20px" height="2px" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <style>
+            @font-face {
+              font-family: "SVGFont";
+              src: url(weasyprint.otf);
+            }
+            text { font-family: "SVGFont" }
+          </style>
+        </defs>
+        <text x="0" y="1.5" font-size="2" fill="blue">
+          ABC DEF
+        </text>
+      </svg>
+    ''')
+
+
+@assert_no_logs
 def test_text_length_adjust_spacing_and_glyphs(assert_pixels):
     assert_pixels('''
         __RR_RR_RR__________
@@ -505,6 +597,195 @@ def test_text_length_adjust_spacing_and_glyphs(assert_pixels):
         <text x="2" y="3.5" font-family="weasyprint" font-size="2" fill="blue"
           letter-spacing="1" textLength="16" lengthAdjust="spacingAndGlyphs">
           abc
+        </text>
+      </svg>
+    ''')
+
+
+@assert_no_logs
+def test_font_shorthand(assert_pixels):
+    assert_pixels('''
+        BBBBBB__BBBBBB______
+        BBBBBB__BBBBBB______
+    ''', '''
+      <style>
+        @page { size: 20px 2px }
+        svg { display: block }
+      </style>
+      <svg width="20px" height="2px" xmlns="http://www.w3.org/2000/svg">
+        <text x="0" y="1.5" style="font: 2px 'weasyprint'" fill="blue">
+          ABC DEF
+        </text>
+      </svg>
+    ''',
+    )
+
+
+@assert_no_logs
+def test_font_shorthand_inheritance_from_parent(assert_pixels):
+    assert_pixels('''
+        BBBBBB__BBBBBB______
+        BBBBBB__BBBBBB______
+    ''', '''
+      <style>
+        @page { size: 20px 2px }
+        svg { display: block }
+      </style>
+      <svg width="20px" height="2px" xmlns="http://www.w3.org/2000/svg">
+        <g style="font: 2px weasyprint">
+          <text x="0" y="1.5" fill="blue" font="bad">
+            <tspan>ABC DEF</tspan>
+          </text>
+        </g>
+      </svg>
+    ''',
+    )
+
+
+@assert_no_logs
+def test_explicit_properties_override_parent_shorthand(assert_pixels):
+    assert_pixels('''
+        BBBBBB__BBBBBB______
+        BBBBBB__BBBBBB______
+    ''', '''
+      <style>
+        @page { size: 20px 2px }
+        svg { display: block }
+      </style>
+      <svg width="20px" height="2px" xmlns="http://www.w3.org/2000/svg">
+        <g font="  28px Times New Roman  ">
+          <text x="0" y="1.5" font-size="2px" font-family="weasyprint" fill="blue">
+            ABC DEF
+          </text>
+        </g>
+      </svg>
+    ''',
+    )
+
+
+@assert_no_logs
+def test_font_shorthand_overrides_explicit_parent_properties(assert_pixels):
+    assert_pixels('''
+        BBBBBB__BBBBBB______
+        BBBBBB__BBBBBB______
+    ''', '''
+      <style>
+        @page { size: 20px 2px }
+        svg { display: block }
+      </style>
+      <svg width="20px" height="2px" xmlns="http://www.w3.org/2000/svg">
+        <g font-size="18px" font-family="weasyprint">
+          <text x="0" y="1.5" style="font: 2px weasyprint" fill="blue">
+            ABC DEF
+          </text>
+        </g>
+      </svg>
+    ''',
+    )
+
+
+@assert_no_logs
+def test_child_font_shorthand_overrides_parent_shorthand(assert_pixels):
+    assert_pixels('''
+        BBBBBB__BBBBBB______
+        BBBBBB__BBBBBB______
+    ''', '''
+      <style>
+        @page { size: 20px 2px }
+        svg { display: block }
+      </style>
+      <svg width="20px" height="2px" xmlns="http://www.w3.org/2000/svg">
+        <g font="   34px    sans   ">
+          <text x="0" y="1.5" style="font: 2px    weasyprint" fill="blue">
+            ABC DEF
+          </text>
+        </g>
+      </svg>
+    ''',
+    )
+
+
+@assert_no_logs
+def test_mixed_explicit_and_shorthand_across_levels(assert_pixels):
+    assert_pixels('''
+        BBBBBB__BBBBBB______
+        BBBBBB__BBBBBB______
+    ''', '''
+      <style>
+        @page { size: 20px 2px }
+        svg { display: block }
+      </style>
+      <svg width="20px" height="2px" xmlns="http://www.w3.org/2000/svg">
+        <g font-size="40px" font-family="sans-serif">
+          <g style="font: 30px sans">
+            <text x="0" y="1.5" font-size="2px" font-family="weasyprint" fill="blue">
+              ABC DEF
+            </text>
+          </g>
+        </g>
+      </svg>
+    ''',
+    )
+
+
+@assert_no_logs
+def test_text_fill_opacity(assert_pixels):
+    # Regression text for #2665.
+    assert_pixels('''
+        ______
+        _ssss_
+        _ssss_
+        _ssss_
+        _ssss_
+        ______
+    ''', '''
+      <style>
+        @page { size: 6px 6px }
+        svg { display: block }
+      </style>
+      <svg width="6px" height="6px" xmlns="http://www.w3.org/2000/svg">
+        <text x="1" y="4" font="4px weasyprint" fill="red" opacity="0.5">
+          A
+        </text>
+      </svg>
+    ''')
+
+
+@assert_no_logs
+def test_emoji_text_svg(assert_pixels):
+    # Regression text for #2683.
+    assert_pixels('''
+        zzzzz
+        zzzzz
+        zzzzz
+        zzzzz
+        zzzzz
+    ''', '''
+      <style>
+        @page { size: 5px 5px }
+        svg { display: block }
+      </style>
+      <svg viewBox="0 0 5 5">
+        <text>🚀</text>
+      </svg>
+    ''')
+
+
+@assert_no_logs
+def test_text_font_family(assert_pixels):
+    # Regression text for #2943.
+    assert_pixels('''
+        BBBBBB__BBBBBB______
+        BBBBBB__BBBBBB______
+    ''', '''
+      <style>
+        @page { size: 20px 2px }
+        svg { display: block }
+      </style>
+      <svg width="20px" height="2px" xmlns="http://www.w3.org/2000/svg">
+        <text x="0" y="1.5" font-size="2" fill="blue"
+            style="font-family: 'unknown font' , 'weasyprint'">
+          ABC DEF
         </text>
       </svg>
     ''')

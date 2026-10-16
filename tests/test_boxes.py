@@ -47,7 +47,7 @@ def test_inline_in_block_1():
                     ('div', 'Text', 'Hello, '),
                     ('em', 'Inline', [
                         ('em', 'Text', 'World')]),
-                    ('div', 'Text', '! ')])]),
+                    ('div', 'Text', '!\n')])]),
             ('p', 'Block', [
                 ('p', 'Line', [
                     ('p', 'Text', 'Lipsum.')])])])]
@@ -69,7 +69,7 @@ def test_inline_in_block_2():
                     ('div', 'Text', 'Hello, '),
                     ('em', 'Inline', [
                         ('em', 'Text', 'World')]),
-                    ('div', 'Text', '! ')])])])]
+                    ('div', 'Text', '!\n')])])])]
     box = parse(source)
     box = build.inline_in_block(box)
     assert_tree(box, expected)
@@ -134,7 +134,7 @@ def test_block_in_inline():
                             ('span', 'Block', [  # This block is "pulled up"
                                 ('span', 'Line', [
                                     ('span', 'Text', 'sit')])]),
-                            ('strong', 'Text', ' '),
+                            ('strong', 'Text', '\n      '),
                             ('span', 'Block', [  # This block is "pulled up"
                                 ('span', 'Line', [
                                     ('span', 'Text', 'amet,')])])]),
@@ -162,7 +162,7 @@ def test_block_in_inline():
                     ('p', 'Line', [
                         ('em', 'Inline', [
                             ('strong', 'Inline', [
-                                ('strong', 'Text', ' ')])])])]),
+                                ('strong', 'Text', '\n      ')])])])]),
                 ('span', 'Block', [
                     ('span', 'Line', [
                         ('span', 'Text', 'amet,')])]),
@@ -243,7 +243,7 @@ def test_whitespace():
         ('pre', 'Block', [
             ('pre', 'Line', [
                 # pre-line
-                ('pre', 'Text', ' foo\n')])])])
+                ('pre', 'Text', 'foo\n')])])])
 
 
 @assert_no_logs
@@ -963,7 +963,7 @@ def test_margin_box_string_set_1():
 
 @assert_no_logs
 def test_margin_box_string_set_2():
-    def simple_string_set_test(content_val, extra_style=""):
+    def simple_string_set_test(content_val, extra_style=''):
         page_1, = render_pages('''
           <style>
             @page {

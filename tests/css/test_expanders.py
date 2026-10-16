@@ -2,7 +2,7 @@
 
 import pytest
 import tinycss2
-from tinycss2.color4 import parse_color
+from tinycss2.color5 import parse_color
 
 from weasyprint.css import preprocess_declarations
 from weasyprint.css.properties import INITIAL_VALUES, ZERO_PIXELS
@@ -26,7 +26,9 @@ def expand_to_dict(css, expected_error=None):
         assert not logs
 
     return {
-        name: value for name, value, _ in declarations if value != 'initial'}
+        name: parse_color(value)
+        if name.endswith('_color') and value != 'inherit' else value
+        for name, value, _ in declarations if value != 'initial'}
 
 
 def assert_invalid(css, message='invalid'):
@@ -120,8 +122,7 @@ def test_four_sides(rule, result):
 
 @assert_no_logs
 def test_four_sides_warning():
-    assert expand_to_dict(
-        'padding: 1 2 3 4 5', 'Expected 1 to 4 token components got 5') == {}
+    assert expand_to_dict('padding: 1 2 3 4 5', 'Expected 1 to 4 tokens, got 5') == {}
 
 
 @assert_no_logs

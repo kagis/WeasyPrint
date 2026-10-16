@@ -589,6 +589,39 @@ def test_border_image_gradient(assert_pixels):
 
 
 @assert_no_logs
+def test_border_image_gradient_units(assert_pixels):
+    # Regression test for #2690.
+    assert_pixels('''
+        __________
+        _RRRRRRRR_
+        _RRRRRRRR_
+        _RR____RR_
+        _BB____BB_
+        _BBBBBBBB_
+        _BBBBBBBB_
+        __________
+    ''', '''
+      <style>
+        @page {
+          size: 10px 8px;
+        }
+        div {
+          border: 1px solid black;
+          border-image-source: linear-gradient(
+            to bottom, red 0, red 50%, blue 0.5em, blue);
+          border-image-slice: 25%;
+          border-image-width: 2;
+          font-size: 6px;
+          height: 4px;
+          margin: 1px;
+          width: 6px;
+        }
+      </style>
+      <div></div>
+    ''')
+
+
+@assert_no_logs
 def test_mask_border(assert_pixels):
     assert_pixels('''
         __________
@@ -708,4 +741,356 @@ def test_outline_offset(assert_pixels):
         }
       </style>
       <div></div>
+    ''')
+
+
+@assert_no_logs
+def test_infinite_border_radius(assert_pixels):
+    # Regression test for #2706.
+    assert_pixels('''
+        __________
+        __zzzzzz__
+        _zzzzzzzz_
+        _zzzRRzzz_
+        _zzRRRRzz_
+        _zzRRRRzz_
+        _zzzRRzzz_
+        _zzzzzzzz_
+        __zzzzzz__
+        __________
+    ''', '''
+      <style>
+        @page {
+          size: 10px;
+        }
+        div {
+          background-color: red;
+          border-radius: calc(infinity * 1px);
+          height: 8px;
+          margin: 1px;
+          width: 8px;
+        }
+      </style>
+      <div></div>
+    ''')
+
+
+@assert_no_logs
+def test_box_shadow_outset(assert_pixels):
+    assert_pixels('''
+        __________
+        _BBBBB____
+        _BBBBB____
+        _BBBBB____
+        _BBBBBrrr_
+        _BBBBBrrr_
+        ____rrrrr_
+        ____rrrrr_
+        ____rrrrr_
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px; margin: 1px }
+        div { width: 5px; height: 5px; background: blue;
+              box-shadow: 3px 3px red }
+      </style>
+      <body><div>
+    ''')
+
+
+@assert_no_logs
+def test_box_shadow_outset_spread(assert_pixels):
+    assert_pixels('''
+        __________
+        _BBB______
+        _BBBrrrrr_
+        _BBBrrrrr_
+        __rrrrrrr_
+        __rrrrrrr_
+        __rrrrrrr_
+        __rrrrrrr_
+        __rrrrrrr_
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px; margin: 1px }
+        div { width: 3px; height: 3px; background: blue;
+              box-shadow: 3px 3px 0 2px red }
+      </style>
+      <body><div>
+    ''')
+
+
+@assert_no_logs
+def test_box_shadow_outset_negative_spread(assert_pixels):
+    assert_pixels('''
+        __________
+        _BBB______
+        _BBB______
+        _BBB______
+        __________
+        _____r____
+        __________
+        __________
+        __________
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px; margin: 1px }
+        div { width: 3px; height: 3px; background: blue;
+              box-shadow: 3px 3px 0 -1px red }
+      </style>
+      <body><div>
+    ''')
+
+
+@assert_no_logs
+def test_box_shadow_outset_big_negative_spread(assert_pixels):
+    assert_pixels('''
+        __________
+        _BBB______
+        _BBB______
+        _BBB______
+        __________
+        __________
+        __________
+        __________
+        __________
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px; margin: 1px }
+        div { width: 3px; height: 3px; background: blue;
+              box-shadow: 3px 3px 0 -2px red }
+      </style>
+      <body><div>
+    ''')
+
+
+@assert_no_logs
+def test_box_shadow_inset(assert_pixels):
+    assert_pixels('''
+        __________
+        _rrrrrrrr_
+        _rrrrrrrr_
+        _rrrrrrrr_
+        _rrrBBBBB_
+        _rrrBBBBB_
+        _rrrBBBBB_
+        _rrrBBBBB_
+        _rrrBBBBB_
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px; margin: 1px }
+        div { width: 8px; height: 8px; background: blue;
+              box-shadow: 3px 3px red inset }
+      </style>
+      <body><div>
+    ''')
+
+
+@assert_no_logs
+def test_box_shadow_inset_spread(assert_pixels):
+    assert_pixels('''
+        __________
+        _rrrrrrrr_
+        _rrrrrrrr_
+        _rrrrrrrr_
+        _rrrrrrrr_
+        _rrrrBBBB_
+        _rrrrBBBB_
+        _rrrrBBBB_
+        _rrrrBBBB_
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px; margin: 1px }
+        div { width: 8px; height: 8px; background: blue;
+              box-shadow: 3px 3px 0 1px red inset }
+      </style>
+      <body><div>
+    ''')
+
+
+@assert_no_logs
+def test_box_shadow_inset_negative_spread(assert_pixels):
+    assert_pixels('''
+        __________
+        _rrrrrrrr_
+        _rrrrrrrr_
+        _rrrrrrrr_
+        _BBBBBBBr_
+        _BBBBBBBr_
+        _BBBBBBBr_
+        _BBBBBBBr_
+        _BBBBBBBr_
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px; margin: 1px }
+        div { width: 8px; height: 8px; background: blue;
+              box-shadow: -2px 4px 0 -1px red inset }
+      </style>
+      <body><div>
+    ''')
+
+
+@assert_no_logs
+def test_box_shadow_inset_big_negative_spread(assert_pixels):
+    assert_pixels('''
+        __________
+        _BBBBBBBB_
+        _BBBBBBBB_
+        _BBBBBBBB_
+        _BBBBBBBB_
+        _BBBBBBBB_
+        _BBBBBBBB_
+        _BBBBBBBB_
+        _BBBBBBBB_
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px; margin: 1px }
+        div { width: 8px; height: 8px; background: blue;
+              box-shadow: -2px 4px 0 -5px red inset }
+      </style>
+      <body><div>
+    ''')
+
+
+@assert_no_logs
+def test_box_shadow_transparent_background(assert_pixels):
+    assert_pixels('''
+        __________
+        __________
+        __________
+        __________
+        ______rrr_
+        ______rrr_
+        ____rrrrr_
+        ____rrrrr_
+        ____rrrrr_
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px; margin: 1px }
+        div { width: 5px; height: 5px; box-shadow: 3px 3px red }
+      </style>
+      <body><div>
+    ''')
+
+
+@assert_no_logs
+def test_box_shadow_inset_outset(assert_pixels):
+    assert_pixels('''
+        rrrrrrrr__
+        rgggggggg_
+        rgBBBBBBB_
+        rgBBBBBBB_
+        rgBBBBBBB_
+        rgBBBBBBB_
+        rgBBBBBBB_
+        rgBBBBBBB_
+        _gBBBBBBB_
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px; margin: 1px }
+        div { width: 8px; height: 8px; background: blue;
+              box-shadow: -1px -1px red, 1px 1px green inset }
+      </style>
+      <body><div>
+    ''')
+
+
+@assert_no_logs
+def test_box_shadow_multiple_outset(assert_pixels):
+    assert_pixels('''
+        __________
+        _BBBBB____
+        _BBBBBr___
+        _BBBBBrg__
+        _BBBBBrg__
+        _BBBBBrg__
+        __rrrrrg__
+        ___ggggg__
+        __________
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px; margin: 1px }
+        div { width: 5px; height: 5px; background: blue;
+              box-shadow: 1px 1px red, 2px 2px green }
+      </style>
+      <body><div>
+    ''')
+
+
+@assert_no_logs
+def test_box_shadow_multiple_inset(assert_pixels):
+    assert_pixels('''
+        __________
+        _rrrrrrrr_
+        _rrrrrrrr_
+        _rrrrrrrr_
+        _rrrBBBBg_
+        _rrrBBBBg_
+        _rrrBBBBg_
+        _rrrBBBBg_
+        _rrrggggg_
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px; margin: 1px }
+        div { width: 8px; height: 8px; background: blue;
+              box-shadow: 3px 3px red inset, -1px -1px green inset }
+      </style>
+      <body><div>
+    ''')
+
+
+@assert_no_logs
+def test_box_shadow_outset_radius(assert_pixels):
+    assert_pixels('''
+        __________
+        __zzBB____
+        _zzzBB____
+        _zzBzz____
+        _BBzzzzrr_
+        _BBzzzzrr_
+        ____zzrzz_
+        ____rrzzz_
+        ____rrzz__
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px; margin: 1px }
+        div { width: 5px; height: 5px; background: blue;
+              box-shadow: 3px 3px red; border-radius: 4px 0 4px 0 }
+      </style>
+      <body><div>
+    ''')
+
+
+@assert_no_logs
+def test_box_shadow_inset_radius(assert_pixels):
+    assert_pixels('''
+        __________
+        __zzzrrrr_
+        _zzzzrrrr_
+        _zzzzrrrr_
+        _zzzrzzzB_
+        _rrrzzzzB_
+        _rrrzzzzB_
+        _rrrzzzBB_
+        _rrrBBBBB_
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px; margin: 1px }
+        div { width: 8px; height: 8px; background: blue;
+              box-shadow: 3px 3px red inset; border-radius: 4px 0 0 0 }
+      </style>
+      <body><div>
     ''')

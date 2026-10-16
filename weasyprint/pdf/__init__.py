@@ -3,23 +3,26 @@
 from importlib.resources import files
 
 import pydyf
-from tinycss2.color4 import D50, D65
+from tinycss2.color5 import D50, D65
 
 from .. import VERSION, Attachment
+from ..css import ColorProfile
 from ..html import W3C_DATE_RE
 from ..logger import LOGGER, PROGRESS_LOGGER
 from ..matrix import Matrix
-from . import debug, pdfa, pdfua
+from ..urls import select_source
+from . import debug, pdfa, pdfua, pdfx
 from .fonts import build_fonts_dictionary
 from .stream import Stream
 from .tags import add_tags
 
 from .anchors import (  # isort:skip
-    add_annotations, add_forms, add_links, add_outlines, resolve_links,
-    resolve_geocodings, add_geocodings, write_pdf_attachment)
+    add_annotations, add_forms, add_geocodings, add_links, add_outlines,
+    resolve_geocodings, resolve_links, write_pdf_attachment)
 
 VARIANTS = {
-    name: data for variants in (pdfa.VARIANTS, pdfua.VARIANTS, debug.VARIANTS)
+    name: data
+    for variants in (pdfa.VARIANTS, pdfua.VARIANTS, pdfx.VARIANTS, debug.VARIANTS)
     for (name, data) in variants.items()}
 
 
@@ -53,16 +56,16 @@ def _w3c_date_to_pdf(string, attr_name):
     return f'D:{pdf_date}'
 
 
-def _reference_resources(pdf, resources, images, fonts):
+def _reference_resources(pdf, resources, images, fonts, color_profiles):
     if 'Font' in resources:
         assert resources['Font'] is None
         resources['Font'] = fonts
-    _use_references(pdf, resources, images)
+    _use_references(pdf, resources, images, color_profiles)
     pdf.add_object(resources)
     return resources.reference
 
 
-def _use_references(pdf, resources, images):
+def _use_references(pdf, resources, images, color_profiles):
     # XObjects
     for key, x_object in resources.get('XObject', {}).items():
         # Images
@@ -91,7 +94,8 @@ def _use_references(pdf, resources, images):
         # Resources
         if 'Resources' in x_object.extra:
             x_object.extra['Resources'] = _reference_resources(
-                pdf, x_object.extra['Resources'], images, resources['Font'])
+                pdf, x_object.extra['Resources'], images, resources['Font'],
+                color_profiles)
 
     # Patterns
     for key, pattern in resources.get('Pattern', {}).items():
@@ -99,7 +103,8 @@ def _use_references(pdf, resources, images):
         resources['Pattern'][key] = pattern.reference
         if 'Resources' in pattern.extra:
             pattern.extra['Resources'] = _reference_resources(
-                pdf, pattern.extra['Resources'], images, resources['Font'])
+                pdf, pattern.extra['Resources'], images, resources['Font'],
+                color_profiles)
 
     # Shadings
     for key, shading in resources.get('Shading', {}).items():
@@ -118,14 +123,13 @@ def generate_pdf(document, target, zoom, **options):
 
     PROGRESS_LOGGER.info('Step 6 - Creating PDF')
 
+    compress = not options['uncompressed_pdf']
+
     # Set properties according to PDF variants
-    srgb = options['srgb']
     pdf_tags = options['pdf_tags']
     variant = options['pdf_variant']
     if variant:
         variant_function, properties = VARIANTS[variant]
-        if 'srgb' in properties:
-            srgb = properties['srgb']
         if 'pdf_tags' in properties:
             pdf_tags = properties['pdf_tags']
 
@@ -141,6 +145,19 @@ def generate_pdf(document, target, zoom, **options):
             'Range': pydyf.Array((-125, 125, -125, 125)),
         }))),
     })
+    # Custom color profiles
+    if options['output_intent'] == 'srgb':
+        document.color_profiles['srgb'] = ColorProfile(
+            (files(__package__) / 'sRGB2014.icc').open('rb'), 'sRGB2014.icc',
+            'relative-colorimetric', (['r'], ['g'], ['b']))
+    for key, color_profile in document.color_profiles.items():
+        profile = pydyf.Stream(
+            [color_profile.content],
+            pydyf.Dictionary({'N': len(color_profile.components)}),
+            compress=compress)
+        pdf.add_object(profile)
+        color_profile.pdf_reference = profile.reference
+        color_space[key] = pydyf.Array(('/ICCBased', profile.reference))
     pdf.add_object(color_space)
     resources = pydyf.Dictionary({
         'ExtGState': pydyf.Dictionary(),
@@ -160,7 +177,6 @@ def generate_pdf(document, target, zoom, **options):
 
     annot_files = {}
     pdf_pages, page_streams = [], []
-    compress = not options['uncompressed_pdf']
     for page_number, (page, links_and_anchors, paged_geocoding) in enumerate(
             zip(document.pages, page_links_and_anchors, paged_geocodings)):
         tags = {} if pdf_tags else None
@@ -181,7 +197,8 @@ def generate_pdf(document, target, zoom, **options):
             left / scale, top / scale,
             (right - left) / scale, (bottom - top) / scale)
         stream = Stream(
-            document.fonts, page_rectangle, resources, images, tags, compress=compress)
+            document.fonts, page_rectangle, resources, images, tags,
+            document.color_profiles, document.output_intent, compress=compress)
         stream.transform(d=-1, f=(page.height * scale))
         pdf.add_object(stream)
         page_streams.append(stream)
@@ -261,14 +278,24 @@ def generate_pdf(document, target, zoom, **options):
             key = key.encode('ascii', errors='ignore').decode()
             if key:
                 pdf.info[key] = pydyf.String(value)
+    if options['xmp_metadata']:
+        for url in options['xmp_metadata']:
+            result = select_source(url, url_fetcher=document.url_fetcher)
+            with result as (file_obj, base_url, charset, _):
+                xmp_metadata = file_obj.read()
+                if charset:
+                    xmp_metadata = xmp_metadata.decode(charset).encode()
+                metadata.xmp_metadata.append(xmp_metadata)
 
     # Embedded files
     attachments = metadata.attachments.copy()
     if options['attachments']:
+        relationships = iter(options['attachment_relationships'] or [])
         for attachment in options['attachments']:
             if not isinstance(attachment, Attachment):
                 attachment = Attachment(
-                    attachment, url_fetcher=document.url_fetcher)
+                    attachment, url_fetcher=document.url_fetcher,
+                    relationship=next(relationships, 'Unspecified'))
             attachments.append(attachment)
     pdf_attachments = []
     for attachment in attachments:
@@ -287,20 +314,10 @@ def generate_pdf(document, target, zoom, **options):
 
     # Embedded fonts
     subset = not options['full_fonts']
-    pdf_fonts = build_fonts_dictionary(
-        pdf, document.fonts, compress, subset, options)
+    pdf_fonts = build_fonts_dictionary(pdf, document.fonts, compress, subset, options)
     pdf.add_object(pdf_fonts)
-    if 'AcroForm' in pdf.catalog:
-        # Include Dingbats for forms
-        dingbats = pydyf.Dictionary({
-            'Type': '/Font',
-            'Subtype': '/Type1',
-            'BaseFont': '/ZapfDingbats',
-        })
-        pdf.add_object(dingbats)
-        pdf_fonts['ZaDb'] = dingbats.reference
     resources['Font'] = pdf_fonts.reference
-    _use_references(pdf, resources, images)
+    _use_references(pdf, resources, images, document.color_profiles)
 
     # Anchors
     if pdf_names:
@@ -314,29 +331,29 @@ def generate_pdf(document, target, zoom, **options):
             pdf.catalog['Names'] = pydyf.Dictionary()
         pdf.catalog['Names']['Dests'] = dests
 
-    if srgb:
-        # Add ICC profile.
-        profile = pydyf.Stream(
-            [(files(__package__) / 'sRGB2014.icc').read_bytes()],
-            pydyf.Dictionary({'N': 3, 'Alternate': '/DeviceRGB'}),
-            compress=compress)
-        pdf.add_object(profile)
-        pdf.catalog['OutputIntents'] = pydyf.Array([
-            pydyf.Dictionary({
-                'Type': '/OutputIntent',
-                'S': '/GTS_PDFA1',
-                'OutputConditionIdentifier': pydyf.String('sRGB IEC61966-2.1'),
-                'DestOutputProfile': profile.reference,
-            }),
-        ])
-
     # Add tags
     if pdf_tags:
-        add_tags(pdf, document, page_streams)
+        add_tags(pdf, document, options['pdf_version'], page_streams)
+
+    # Add output intents
+    output_intent = document.output_intent
+    color_profile = None
+    if output_intent in document.color_profiles:
+        color_profile = document.color_profiles[document.output_intent]
+    elif 'device-cmyk' in document.color_profiles:
+        color_profile = document.color_profiles['device-cmyk']
+    elif document.color_profiles:
+        color_profile = next(iter(document.color_profiles.values()))
+    if color_profile:
+        subtype = '/GTS_PDFA1' if variant and 'pdf/a' in variant else '/GTS_PDFX'
+        intents = pydyf.Dictionary({'Type': '/OutputIntent', 'S': subtype})
+        intents['OutputConditionIdentifier'] = pydyf.String(color_profile.name)
+        intents['Info'] = pydyf.String(color_profile.name)
+        intents['DestOutputProfile'] = color_profile.pdf_reference
+        pdf.catalog['OutputIntents'] = pydyf.Array([intents])
 
     # Apply PDF variants functions
     if variant:
-        variant_function(
-            pdf, metadata, document, page_streams, attachments, compress)
+        variant_function(pdf, document, page_streams, attachments, compress)
 
     return pdf

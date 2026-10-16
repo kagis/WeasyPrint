@@ -4,10 +4,11 @@ from math import isclose
 
 import pytest
 
-from weasyprint import CSS, default_url_fetcher
-from weasyprint.css import find_stylesheets, get_all_computed_styles
-from weasyprint.urls import path2url
+from weasyprint import CSS
+from weasyprint.urls import URLFetcher, path2url
 
+from weasyprint.css import (  # isort:skip
+    find_stylesheets, get_all_computed_styles, string_to_css, url_to_css)
 from ..testing_utils import (  # isort:skip
     BASE_URL, FakeHTML, assert_no_logs, capture_logs, resource_path)
 
@@ -17,8 +18,8 @@ def test_find_stylesheets():
     html = FakeHTML(resource_path('doc1.html'))
 
     sheets = list(find_stylesheets(
-        html.wrapper_element, 'print', default_url_fetcher, html.base_url,
-        font_config=None, counter_style=None, page_rules=None, layers=None))
+        html.wrapper_element, 'print', URLFetcher(), html.base_url, font_config=None,
+        counter_style=None, color_profiles=None, page_rules=None, layers=None))
     assert len(sheets) == 2
     # Also test that stylesheets are in tree order.
     sheet_names = [
@@ -119,7 +120,7 @@ def test_annotate_document():
 
     # The href attr should be as in the source, not made absolute.
     assert after['content'] == (
-        ('string', ' ['), ('string', 'home.html'), ('string', ']'))
+        ('string', ' ['), ('attr()', ('href', 'string', '')), ('string', ']'))
     assert after['background_color'] == (1, 0, 0, 1)
     assert after['border_top_width'] == 42
     assert after['border_bottom_width'] == 3
@@ -166,6 +167,7 @@ def test_important():
 
 @assert_no_logs
 @pytest.mark.parametrize(('value', 'width'), [
+    # Absolute units.
     ('96px', 96),
     ('1in', 96),
     ('72pt', 96),
@@ -173,6 +175,7 @@ def test_important():
     ('2.54cm', 96),
     ('25.4mm', 96),
     ('101.6q', 96),
+    # Font-relative units.
     ('1.1em', 11),
     ('1.1rem', 17.6),
     ('1.1ch', 11),
@@ -185,10 +188,42 @@ def test_important():
     ('1ric', 32),
     ('1.1lh', 13.2),
     ('1.1rlh', 26.4),
+    # Viewport-relative units.
+    ('50vh', 50),
+    ('50vw', 100),
+    ('25vb', 25),
+    ('1.25vi', 2.5),
+    ('10vmin', 10),
+    ('20vmax', 40),
+    ('50lvh', 50),
+    ('50lvw', 100),
+    ('25lvb', 25),
+    ('1.25lvi', 2.5),
+    ('10lvmin', 10),
+    ('20lvmax', 40),
+    ('50svh', 50),
+    ('50svw', 100),
+    ('25svb', 25),
+    ('1.25svi', 2.5),
+    ('10svmin', 10),
+    ('20svmax', 40),
+    ('50dvh', 50),
+    ('50dvw', 100),
+    ('25dvb', 25),
+    ('1.25dvi', 2.5),
+    ('10dvmin', 10),
+    ('20dvmax', 40),
+    ('50pvh', 100),
+    ('50pvw', 150),
+    ('25pvb', 50),
+    ('1.5pvi', 4.5),
+    ('10pvmin', 20),
+    ('20pvmax', 60),
 ])
 def test_units(value, width):
     document = FakeHTML(base_url=BASE_URL, string='''
       <html style="font: 16px / 1.5 weasyprint">
+      <style>@page { size: 300px 200px; margin: 50px }</style>
       <body style="font: 10px / 1.2 weasyprint">
       <p style="margin-left: %s"></p>
       <p style="margin-left: %s"></p>
@@ -227,3 +262,25 @@ def test_media_queries(media, width, warning):
     html, = page._page_box.children
     assert html.width == width
     assert (logs if warning else not logs)
+
+
+@pytest.mark.parametrize(('string', 'expected'), [
+    ('a', '"a"'),
+    ('a\nb', '"a\\Ab"'),
+    ('a\rb', '"a\\Db"'),
+    ('\n\na', '"\\A\\Aa"'),
+    ('a"b', '"a\\"b"'),
+])
+def test_string_to_css(string, expected):
+    assert string_to_css(string) == expected
+
+
+@pytest.mark.parametrize(('string', 'expected'), [
+    ('a', 'url("a")'),
+    ('a\nb', 'url("a\\Ab")'),
+    ('a\rb', 'url("a\\Db")'),
+    ('\n\na', 'url("\\A\\Aa")'),
+    ('a"b', 'url("a\\"b")'),
+])
+def test_url_to_css(string, expected):
+    assert url_to_css(string) == expected

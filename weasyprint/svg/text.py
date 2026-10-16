@@ -33,11 +33,13 @@ def text(svg, node, font_size):
     style.update(INITIAL_VALUES)
     style.font_config = svg.font_config
     style['font_family'] = [
-        font.strip('"\'') for font in
+        font.strip(' "\'') for font in
         node.get('font-family', 'sans-serif').split(',')]
     style['font_style'] = node.get('font-style', 'normal')
     style['font_weight'] = node.get('font-weight', 400)
     style['font_size'] = font_size
+    if node.get('direction') in ('ltr', 'rtl'):
+        style['direction'] = node.get('direction')
     if style['font_weight'] == 'normal':
         style['font_weight'] = 400
     elif style['font_weight'] == 'bold':
@@ -128,12 +130,8 @@ def text(svg, node, font_size):
         svg.cursor_position = (x + dx, y + dy)
         return
 
-    svg.stream.push_state()
-    svg.set_graphical_state(node, font_size, text=True)
-    svg.stream.begin_text()
-    emoji_lines = []
-
-    # Draw letters
+    # Layout letters.
+    layouts = []
     for i, ((x, y, dx, dy, r), letter) in enumerate(letters_positions):
         if x:
             svg.cursor_d_position[0] = 0
@@ -141,7 +139,7 @@ def text(svg, node, font_size):
             svg.cursor_d_position[1] = 0
         svg.cursor_d_position[0] += dx or 0
         svg.cursor_d_position[1] += dy or 0
-        layout, _, _, width, height, _ = split_first_line(
+        layout, _, _, width, height, baseline = split_first_line(
             letter, style, svg.context, inf, 0)
         x = svg.cursor_position[0] if x is None else x
         y = svg.cursor_position[1] if y is None else y
@@ -154,25 +152,34 @@ def text(svg, node, font_size):
         y_position = y + svg.cursor_d_position[1] + y_align
         angle = last_r if r is None else r
         points = (
-            (x_position, y_position),
-            (x_position + width, y_position - height))
-        node.text_bounding_box = extend_bounding_box(
-            node.text_bounding_box, points)
+            (x_position, y_position - baseline),
+            (x_position + width, y_position - baseline + height))
+        # TODO: Use ink extents instead of logical from line_break.line_size().
+        node.text_bounding_box = extend_bounding_box(node.text_bounding_box, points)
+        layouts.append((layout, x_position, y_position, x, y, angle, baseline))
 
+    # Set state after we have bounding box for gradients and patterns, before drawing.
+    svg.stream.push_state()
+    fill, stroke = svg.set_graphical_state(node, font_size)
+    svg.stream.begin_text()
+
+    # Draw letters.
+    emoji_lines = []
+    for layout, x_position, y_position, x, y, angle, baseline in layouts:
         layout.reactivate(style)
-        svg.fill_stroke(node, font_size, text=True)
+        svg.fill_stroke(fill, stroke, text=True)
         matrix = Matrix(a=scale_x, d=-1, e=x_position, f=y_position)
         if angle:
             a, c = cos(angle), sin(angle)
             matrix = Matrix(a, -c, c, a) @ matrix
-        emojis = draw_first_line(
-            svg.stream, TextBox(layout, style), 'none', 'none', matrix)
-        emoji_lines.append((font_size, x, y, emojis))
+        text_box = TextBox(layout, style)
+        text_box.baseline = baseline
+        emojis = draw_first_line(svg.stream, text_box, 'none', 'none', matrix)
+        emoji_lines.append((x, y, emojis))
 
     svg.stream.end_text()
     svg.stream.pop_state()
 
-    for font_size, x, y, emojis in emoji_lines:
-        # TODO: pass real style instead of dict.
-        style = {'font_size': font_size}
+    # Draw emojis.
+    for x, y, emojis in emoji_lines:
         draw_emojis(svg.stream, style, x, y, emojis)

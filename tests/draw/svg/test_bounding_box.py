@@ -36,13 +36,13 @@ def test_bounding_box_circle(assert_pixels):
     assert_pixels('''
         __________
         __BBBBBB__
-        _BBBBBBBR_
-        _BBBBBBRR_
-        _BBBBBRRR_
-        _BBBBRRRR_
-        _BBBRRRRR_
-        _BBRRRRRR_
-        __RRRRRR__
+        _BBBBBBBz_
+        _BBBBBBzR_
+        _BBBBBzRR_
+        _BBBBzRRR_
+        _BBBzRRRR_
+        _BBzRRRRR_
+        __zRRRRR__
         __________
     ''', '''
       <style>
@@ -67,13 +67,13 @@ def test_bounding_box_ellipse(assert_pixels):
     assert_pixels('''
         __________
         __BBBBBB__
-        _BBBBBBBR_
-        _BBBBBBRR_
-        _BBBBBRRR_
-        _BBBBRRRR_
-        _BBBRRRRR_
-        _BBRRRRRR_
-        __RRRRRR__
+        _BBBBBBBz_
+        _BBBBBBzR_
+        _BBBBBzRR_
+        _BBBBzRRR_
+        _BBBzRRRR_
+        _BBzRRRRR_
+        __zRRRRR__
         __________
     ''', '''
       <style>
@@ -195,6 +195,70 @@ def test_bounding_box_text(assert_pixels):
         </text>
       </svg>
     ''')
+
+
+@assert_no_logs
+def test_bounding_box_text_anchor(assert_pixels):
+    assert_pixels('''
+        ________
+        __tttt__
+        __tttt__
+        ________
+        __tttt__
+        __tttt__
+        ________
+        __tttt__
+        __tttt__
+        ________
+    ''', '''
+      <style>
+        @page { size: 8px 10px }
+        svg { display: block }
+      </style>
+      <svg width="8px" height="10px" xmlns="http://www.w3.org/2000/svg">
+        <text x="2" y="3" opacity="0.5" fill="lime"
+              font-family="weasyprint" font-size="2" text-anchor="start">
+          ab
+        </text>
+        <text x="4" y="6" opacity="0.5" fill="lime"
+              font-family="weasyprint" font-size="2" text-anchor="middle">
+          ab
+        </text>
+        <text x="6" y="9" opacity="0.5" fill="lime"
+              font-family="weasyprint" font-size="2" text-anchor="end">
+          ab
+        </text>
+      </svg>
+    ''')
+
+
+@assert_no_logs
+@pytest.mark.parametrize('text', [
+    'ab',
+    '<tspan>ab</tspan>',
+    '<tspan><tspan>ab</tspan></tspan>',
+    'a<tspan>b</tspan>',
+    '<tspan x="4">ab</tspan>',
+    '<tspan y="3">ab</tspan>',
+])
+def test_bounding_box_text_anchor_tspan(assert_pixels, text):
+    assert_pixels('''
+        ________
+        __tttt__
+        __tttt__
+        ________
+    ''', '''
+      <style>
+        @page { size: 8px 4px }
+        svg { display: block }
+      </style>
+      <svg width="8px" height="4px" xmlns="http://www.w3.org/2000/svg">
+        <text x="4" y="3" opacity="0.5" fill="lime"
+              font-family="weasyprint" font-size="2" text-anchor="middle">
+          %s
+        </text>
+      </svg>
+    ''' % text)
 
 
 @assert_no_logs

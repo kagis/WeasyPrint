@@ -107,7 +107,7 @@ def test_linear_gradient_multicolor_userspace(assert_pixels):
     assert_pixels('''
         __________
         BBBBBBBBBB
-        BBBBBBBBBB
+        zBBBBBBBBz
         RRRRRRRRRR
         RRRRRRRRRR
         GGGGGGGGGG
@@ -174,13 +174,50 @@ def test_linear_gradient_transform(assert_pixels):
 
 
 @assert_no_logs
+def test_linear_gradient_transform_nested(assert_pixels):
+    assert_pixels('''
+        __________
+        BBBBBBBBBB
+        BBBBBBBBBB
+        BBBBBBBBBB
+        BBBBBBBBBB
+        BBBBBBBBBB
+        RRRRRRRRRR
+        GGGGGGGGGG
+        vvvvvvvvvv
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px 10px}
+        svg { display: block }
+      </style>
+      <svg width="10px" height="10px" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1"
+            gradientUnits="objectBoundingBox"
+            gradientTransform="matrix(0.5, 0, 0, 0.5, 0, 0.5)">
+            <stop stop-color="blue" offset="25%"></stop>
+            <stop stop-color="red" offset="25%"></stop>
+            <stop stop-color="red" offset="50%"></stop>
+            <stop stop-color="lime" offset="50%"></stop>
+            <stop stop-color="lime" offset="75%"></stop>
+            <stop stop-color="rgb(128,0,128)" offset="75%"></stop>
+          </linearGradient>
+        </defs>
+        <rect transform="matrix(-2, 0, 0, 1, 10, 100)"
+              x="0" y="-99" width="20" height="8" fill="url(#grad)" />
+      </svg>
+    ''')
+
+
+@assert_no_logs
 def test_linear_gradient_transform_repeat(assert_pixels):
     assert_pixels('''
         __________
         BBBBBBBBBB
         RRRRRRRRRR
         GGGGGGGGGG
-        vvvvvvvvvv
+        zvvvvvvvvz
         BBBBBBBBBB
         RRRRRRRRRR
         GGGGGGGGGG
@@ -210,7 +247,7 @@ def test_linear_gradient_transform_repeat(assert_pixels):
 
 
 @assert_no_logs
-def test_linear_gradient_transform_userspace(assert_pixels):
+def test_linear_gradient_userspace_transform(assert_pixels):
     assert_pixels('''
         __________
         BBBBBBBBBB
@@ -246,13 +283,50 @@ def test_linear_gradient_transform_userspace(assert_pixels):
 
 
 @assert_no_logs
+def test_linear_gradient_userspace_transform_nested(assert_pixels):
+    assert_pixels('''
+        __________
+        BBBBBBBBBB
+        BBBBBBBBBB
+        BBBBBBBBBB
+        BBBBBBBBBB
+        BBBBBBBBBB
+        RRRRRRRRRR
+        GGGGGGGGGG
+        vvvvvvvvvv
+        __________
+    ''', '''
+      <style>
+        @page { size: 10px 10px}
+        svg { display: block }
+      </style>
+      <svg width="10px" height="10px" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="grad" x1="0" y1="0" x2="0" y2="8"
+            gradientUnits="userSpaceOnUse"
+            gradientTransform="matrix(0.5, 0, 0, 0.5, 0, 4)">
+            <stop stop-color="blue" offset="25%"></stop>
+            <stop stop-color="red" offset="25%"></stop>
+            <stop stop-color="red" offset="50%"></stop>
+            <stop stop-color="lime" offset="50%"></stop>
+            <stop stop-color="lime" offset="75%"></stop>
+            <stop stop-color="rgb(128,0,128)" offset="75%"></stop>
+          </linearGradient>
+        </defs>
+        <rect transform="matrix(-2, 0, 0, 1, 10, 1)"
+              x="0" y="0" width="20" height="8" fill="url(#grad)" />
+      </svg>
+    ''')
+
+
+@assert_no_logs
 def test_linear_gradient_transform_repeat_userspace(assert_pixels):
     assert_pixels('''
         __________
         BBBBBBBBBB
         RRRRRRRRRR
         GGGGGGGGGG
-        vvvvvvvvvv
+        zvvvvvvvvz
         BBBBBBBBBB
         RRRRRRRRRR
         GGGGGGGGGG
@@ -633,6 +707,77 @@ def test_radial_gradient(assert_pixels):
 
 
 @assert_no_logs
+def test_radial_gradient_transform(assert_pixels):
+    assert_pixels('''
+        ____________
+        _rrrrrrrrrr_
+        _rrrrrrrrrr_
+        _rrrrBBrrrr_
+        _rrrBBBBrrr_
+        _rrBBBBBBrr_
+        _rrBBBBBBrr_
+        _rrrBBBBrrr_
+        _rrrrBBrrrr_
+        _rrrrrrrrrr_
+        _rrrrrrrrrr_
+        ____________
+    ''', '''
+      <style>
+        @page { size: 12px }
+        svg { display: block }
+      </style>
+      <svg width="12px" height="12px" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="grad" cx="-1" cy="-1" r="1"
+            fx="-1" fy="-1" fr="0.4"
+            gradientTransform="matrix(0.5, 0, 0, 0.5, 1, 1)"
+            gradientUnits="objectBoundingBox">
+            <stop stop-color="blue" offset="25%"></stop>
+            <stop stop-color="red" offset="25%"></stop>
+          </radialGradient>
+        </defs>
+        <rect x="1" y="1" width="10" height="10" fill="url(#grad)" />
+      </svg>
+    ''')
+
+
+@assert_no_logs
+def test_radial_gradient_transform_nested(assert_pixels):
+    assert_pixels('''
+        ____________
+        _rrrrrrrrrr_
+        _rrrrrrrrrr_
+        _rrrrBBrrrr_
+        _rrrBBBBrrr_
+        _rrBBBBBBrr_
+        _rrBBBBBBrr_
+        _rrrBBBBrrr_
+        _rrrrBBrrrr_
+        _rrrrrrrrrr_
+        _rrrrrrrrrr_
+        ____________
+    ''', '''
+      <style>
+        @page { size: 12px }
+        svg { display: block }
+      </style>
+      <svg width="12px" height="12px" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="grad" cx="-1" cy="-1" r="1"
+            fx="-1" fy="-1" fr="0.4"
+            gradientTransform="matrix(0.5, 0, 0, 0.5, 1, 1)"
+            gradientUnits="objectBoundingBox">
+            <stop stop-color="blue" offset="25%"></stop>
+            <stop stop-color="red" offset="25%"></stop>
+          </radialGradient>
+        </defs>
+        <rect transform="matrix(1, 0, 0, 1, 10, 10)"
+              x="-9" y="-9" width="10" height="10" fill="url(#grad)" />
+      </svg>
+    ''')
+
+
+@assert_no_logs
 def test_radial_gradient_userspace(assert_pixels):
     assert_pixels('''
         ____________
@@ -661,6 +806,108 @@ def test_radial_gradient_userspace(assert_pixels):
           </radialGradient>
         </defs>
         <rect x="1" y="1" width="10" height="10" fill="url(#grad)" />
+      </svg>
+    ''')
+
+
+@assert_no_logs
+def test_radial_gradient_negative_rect_userspace(assert_pixels):
+    assert_pixels('''
+        ____________
+        rrrrrrrrrrr_
+        rrrrrrrrrrr_
+        rrrrrBBrrrr_
+        rrrrBBBBrrr_
+        rrrBBBBBBrr_
+        rrrBBBBBBrr_
+        rrrrBBBBrrr_
+        rrrrrBBrrrr_
+        rrrrrrrrrrr_
+        rrrrrrrrrrr_
+        ____________
+    ''', '''
+      <style>
+        @page { size: 12px }
+        svg { display: block }
+      </style>
+      <svg width="12px" height="12px" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="grad" cx="6" cy="6" r="5" fx="6" fy="6" fr="2"
+            gradientUnits="userSpaceOnUse">
+            <stop stop-color="blue" offset="25%"></stop>
+            <stop stop-color="red" offset="25%"></stop>
+          </radialGradient>
+        </defs>
+        <rect x="-9" y="1" width="20" height="10" fill="url(#grad)" />
+      </svg>
+    ''')
+
+
+@assert_no_logs
+def test_radial_gradient_userspace_transform(assert_pixels):
+    assert_pixels('''
+        ____________
+        _rrrrrrrrrr_
+        _rrrrrrrrrr_
+        _rrrrBBrrrr_
+        _rrrBBBBrrr_
+        _rrBBBBBBrr_
+        _rrBBBBBBrr_
+        _rrrBBBBrrr_
+        _rrrrBBrrrr_
+        _rrrrrrrrrr_
+        _rrrrrrrrrr_
+        ____________
+    ''', '''
+      <style>
+        @page { size: 12px }
+        svg { display: block }
+      </style>
+      <svg width="12px" height="12px" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="grad" cx="-8" cy="-8" r="10" fx="-8" fy="-8" fr="4"
+            gradientTransform="matrix(0.5, 0, 0, 0.5, 10, 10)"
+            gradientUnits="userSpaceOnUse">
+            <stop stop-color="blue" offset="25%"></stop>
+            <stop stop-color="red" offset="25%"></stop>
+          </radialGradient>
+        </defs>
+        <rect x="1" y="1" width="10" height="10" fill="url(#grad)" />
+      </svg>
+    ''')
+
+
+@assert_no_logs
+def test_radial_gradient_userspace_transform_nested(assert_pixels):
+    assert_pixels('''
+        ____________
+        _rrrrrrrrrr_
+        _rrrrrrrrrr_
+        _rrrrBBrrrr_
+        _rrrBBBBrrr_
+        _rrBBBBBBrr_
+        _rrBBBBBBrr_
+        _rrrBBBBrrr_
+        _rrrrBBrrrr_
+        _rrrrrrrrrr_
+        _rrrrrrrrrr_
+        ____________
+    ''', '''
+      <style>
+        @page { size: 12px }
+        svg { display: block }
+      </style>
+      <svg width="12px" height="12px" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="grad" cx="-28" cy="-28" r="10" fx="-28" fy="-28" fr="4"
+            gradientTransform="matrix(0.5, 0, 0, 0.5, 10, 10)"
+            gradientUnits="userSpaceOnUse">
+            <stop stop-color="blue" offset="25%"></stop>
+            <stop stop-color="red" offset="25%"></stop>
+          </radialGradient>
+        </defs>
+        <rect transform="matrix(1, 0, 0, 1, 10, 10)"
+              x="-9" y="-9" width="10" height="10" fill="url(#grad)" />
       </svg>
     ''')
 
@@ -741,16 +988,16 @@ def test_radial_gradient_multicolor_userspace(assert_pixels):
 def test_radial_gradient_repeat(assert_pixels):
     assert_pixels('''
         ____________
-        _GBBrrrrBBG_
+        _GBBzzzzBBG_
         _BrrGGGGrrB_
         _BrGBBBBGrB_
-        _rGBBrrBBGr_
-        _rGBrGGrBGr_
-        _rGBrGGrBGr_
-        _rGBBrrBBGr_
+        _zGBBrrBBGz_
+        _zGBrGGrBGz_
+        _zGBrGGrBGz_
+        _zGBBrrBBGz_
         _BrGBBBBGrB_
         _BrrGGGGrrB_
-        _GBBrrrrBBG_
+        _GBBzzzzBBG_
         ____________
     ''', '''
       <style>
@@ -777,16 +1024,16 @@ def test_radial_gradient_repeat(assert_pixels):
 def test_radial_gradient_reflect(assert_pixels):
     assert_pixels('''
         ____________
-        _GrrrrrrrrG_
+        _GrrzzzzrrG_
         _rrrGGGGrrr_
         _rrGBBBBGrr_
-        _rGBBBBBBGr_
-        _rGBBGGBBGr_
-        _rGBBGGBBGr_
-        _rGBBBBBBGr_
+        _zGBBBBBBGz_
+        _zGBBGGBBGz_
+        _zGBBGGBBGz_
+        _zGBBBBBBGz_
         _rrGBBBBGrr_
         _rrrGGGGrrr_
-        _GrrrrrrrrG_
+        _GrrzzzzrrG_
         ____________
     ''', '''
       <style>
@@ -946,7 +1193,7 @@ def test_gradient_opacity(assert_pixels):
 
 
 @assert_no_logs
-@pytest.mark.parametrize('url', ['#grad\'', '\'#gra', '!', '#'])
+@pytest.mark.parametrize('url', ["#grad'", "'#gra", '!', '#'])
 def test_gradient_bad_url(assert_pixels, url):
     assert_pixels('''
         __________

@@ -68,6 +68,11 @@ def check_attr(token, allowed_type=None):
         name_and_type, fallback = parts[0], ''
     elif len(parts) == 2:
         name_and_type, fallback = parts
+        # TODO: support fallbacks with multiple tokens and follow type.
+        if len(fallback) >= 1 and fallback[0].type == 'string':
+            fallback = fallback[0].value
+        else:
+            fallback = ''
     else:
         return
 
@@ -144,7 +149,8 @@ def check_string_or_element(string_or_element, token):
             ident = arguments.pop(0)
             if ident.type != 'ident':
                 return
-            if ident.lower_value not in ('first', 'start', 'last', 'first-except'):
+            values = ('first', 'start', 'last', 'first-except', 'all-once')
+            if ident.lower_value not in values:
                 return
             ident = ident.lower_value
         else:
@@ -170,9 +176,12 @@ def check_var(token):
 
 def check_math(token):
     # TODO: validate for real.
-    function = Function(token)
-    if (name := function.name) is None:
+    if type(token) is tuple:
+        return any(check_math(item) for item in token)
+    elif getattr(token, 'type', None) != 'function':
         return
+    function = Function(token)
+    name = function.name
     arguments = function.split_comma(single_tokens=False)
     if name == 'calc':
         return len(arguments) == 1

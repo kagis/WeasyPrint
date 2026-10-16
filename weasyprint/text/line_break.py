@@ -256,6 +256,8 @@ def split_first_line(text, style, context, max_width, justification_spacing,
     ``baseline``: baseline in pixels of the first line
 
     """
+    from ..layout.percent import percentage
+
     # See https://www.w3.org/TR/css-text-3/#white-space-property
     text_wrap = style['white_space'] in ('normal', 'pre-wrap', 'pre-line')
     space_collapse = style['white_space'] in ('normal', 'nowrap', 'pre-line')
@@ -335,8 +337,6 @@ def split_first_line(text, style, context, max_width, justification_spacing,
         start, end = len(first_line_text) + 1, len(short_text)
         second_line_log_attrs = log_attrs[start:end]
         break_point = get_next_break_point(second_line_log_attrs)
-        if break_point is not None:
-            break_point -= len(first_line_text) + 1
     next_word = second_line_text[:break_point].rstrip(' ')
     if next_word:
         if space_collapse and second_line_text[break_point or -1] == ' ':
@@ -392,11 +392,8 @@ def split_first_line(text, style, context, max_width, justification_spacing,
                     # This word is long enough.
                     first_line_width, _ = line_size(first_line, style)
                     space = max_width - first_line_width
-                    if style['hyphenate_limit_zone'].unit == '%':
-                        limit_zone = (
-                            max_width * style['hyphenate_limit_zone'].value / 100)
-                    else:
-                        limit_zone = style['hyphenate_limit_zone'].value
+                    limit_zone = percentage(
+                        style['hyphenate_limit_zone'], style, max_width)
                     if space > limit_zone or space < 0:
                         # Available space is worth the try, or the line is even too long
                         # to fit: try to hyphenate.
@@ -537,6 +534,9 @@ def strut(style):
     The baseline is given from the top edge of line height.
 
     """
+    from ..css.functions import check_math
+    from ..layout.percent import percentage
+
     if style['font_size'] == 0:
         return 0, 0
 
@@ -553,9 +553,13 @@ def strut(style):
         result = text_height, baseline
         style.font_config.strut_layouts[key] = result
         return result
-    type_, line_height = style['line_height']
-    if type_ == 'NUMBER':
+    line_height = style['line_height']
+    if check_math(line_height):
+        line_height = percentage(line_height, style, style['font_size'])
+    elif isinstance(line_height, float):
         line_height *= style['font_size']
+    else:
+        line_height = line_height.value
     result = line_height, baseline + (line_height - text_height) / 2
     style.font_config.strut_layouts[key] = result
     return result

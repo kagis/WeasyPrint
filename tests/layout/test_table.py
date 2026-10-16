@@ -1681,8 +1681,7 @@ def test_table_column_width_1():
     with capture_logs() as logs:
         page, = render_pages(source)
     assert len(logs) == 1
-    assert logs[0].startswith('WARNING: This table row has more columns than '
-                              'the table, ignored 1 cell')
+    assert logs[0].startswith('WARNING: This row has more columns')
     html, = page.children
     body, = html.children
     wrapper, = body.children
@@ -1692,7 +1691,7 @@ def test_table_column_width_1():
     cells = [first_row.children, second_row.children, third_row.children]
     assert len(first_row.children) == 2
     assert len(second_row.children) == 4
-    # Third cell here is completly removed.
+    # Third cell here is completely removed.
     assert len(third_row.children) == 2
 
     assert body.position_x == 0
@@ -2913,6 +2912,39 @@ def test_table_page_break_avoid_before_tbody():
 
 
 @assert_no_logs
+def test_table_page_break_avoid_after():
+    page1, page2 = render_pages('''
+      <style>
+        @page { size: 7px }
+        table { font: 2px/1 weasyprint; border-collapse: collapse }
+        tr { break-inside: avoid }
+      </style>
+      <table>
+        <tbody>
+          <tr><td>1</td></tr>
+          <tr><td>2</td></tr>
+          <tr style="break-after: avoid"><td>3</td></tr>
+          <tr><td>4</td></tr>
+          <tr><td>5</td></tr>
+        </tbody>
+      </table>
+     ''')
+    html, = page1.children
+    body, = html.children
+    table_wrapper, = body.children
+    table, = table_wrapper.children
+    table_group, = table.children
+    assert len(table_group.children) == 2
+
+    html, = page2.children
+    body, = html.children
+    table_wrapper, = body.children
+    table, = table_wrapper.children
+    table_group, = table.children
+    assert len(table_group.children) == 3
+
+
+@assert_no_logs
 @pytest.mark.parametrize(('vertical_align', 'table_position_y'), [
     ('top', 8),
     ('bottom', 8),
@@ -3175,6 +3207,46 @@ def test_table_break_children_margin():
     assert len(render_pages(html)) == 3
 
 
+def test_table_break_in_padded_block():
+    # Regression test for #2580.
+    page1, = render_pages('''
+      <style>
+        @page { size: 100px; margin: 0 }
+        body { margin: 0; font: 2px/1 weasyprint }
+        div.previous { height: 20px }
+        div.wrapper { padding-bottom: 6px }
+        table {
+          border-collapse: collapse;
+          border-spacing: 0;
+          margin: 20px 0;
+          table-layout: fixed;
+          width: 100%;
+        }
+        td { height: 10px; padding: 0 }
+        tr { break-inside: avoid }
+      </style>
+      <div class="previous">Before</div>
+      <div class="wrapper">
+        <table>
+          <thead><tr><td>Header</td></tr></thead>
+          <tbody><tr><td>Row</td></tr></tbody>
+          <tfoot><tr><td>Footer</td></tr></tfoot>
+        </table>
+      </div>
+    ''')
+    html, = page1.children
+    body, = html.children
+    previous, wrapper = body.children
+    table_wrapper, = wrapper.children
+    table, = table_wrapper.children
+    header, body_group, footer = table.children
+
+    assert previous.element_tag == 'div'
+    assert len(header.children) == 1
+    assert len(body_group.children) == 1
+    assert len(footer.children) == 1
+
+
 def test_table_td_break_inside_avoid():
     # Regression test for #1547.
     html = '''
@@ -3214,8 +3286,15 @@ def test_table_bad_int_td_th_span():
     row_group, = table.children
     row_1, row_2 = row_group.children
     td_1, td_2 = row_1.children
+    # colspan="bad" falls back to 1
+    assert td_1.colspan == 1
     assert td_1.width == td_2.width
+    # rowspan="23.4" is parsed as 23 per HTML spec (stops at "."),
+    # then clamped to actual row count by the layout engine
+    assert td_2.rowspan == 2
     th_1, th_2 = row_2.children
+    # colspan="x" falls back to 1
+    assert th_1.colspan == 1
     assert th_1.width == th_2.width
 
 
@@ -3263,6 +3342,83 @@ def test_table_bad_int_colgroup_span():
     row, = row_group.children
     td_1, td_2 = row.children
     assert td_1.width == 25
+
+
+@assert_no_logs
+def test_table_int_with_trailing_text_td_th_span():
+    # https://github.com/Kozea/WeasyPrint/issues/2636
+    # Browsers ignore text after digits in HTML integer attributes.
+    page, = render_pages('''
+      <table>
+        <tr>
+          <td colspan="100%">a</td>
+        </tr>
+        <tr>
+          <td rowspan="2px">a</td>
+          <td>a</td>
+        </tr>
+        <tr>
+          <td>a</td>
+        </tr>
+      </table>
+    ''')
+    html, = page.children
+    body, = html.children
+    table_wrapper, = body.children
+    table, = table_wrapper.children
+    row_group, = table.children
+    row_1, row_2, row_3 = row_group.children
+    td_1, = row_1.children
+    # colspan="100%" should be parsed as colspan="100"
+    assert td_1.colspan == 100
+    td_2, td_3 = row_2.children
+    # rowspan="2px" should be parsed as rowspan="2"
+    assert td_2.rowspan == 2
+
+
+@assert_no_logs
+def test_table_int_with_trailing_text_col_span():
+    # https://github.com/Kozea/WeasyPrint/issues/2636
+    page, = render_pages('''
+      <table>
+        <colgroup>
+          <col span="2px" style="width:25px" />
+        </colgroup>
+        <tr>
+          <td>a</td>
+          <td>a</td>
+        </tr>
+      </table>
+    ''')
+    html, = page.children
+    body, = html.children
+    table_wrapper, = body.children
+    table, = table_wrapper.children
+    row_group, = table.children
+    row, = row_group.children
+    td_1, td_2 = row.children
+    # span="2px" should be parsed as span="2", applying width to both columns
+    assert td_1.width == 25
+    assert td_2.width == 25
+
+
+@assert_no_logs
+def test_table_colspan_rounding_error():
+    # Regression test for #2842.
+    page, = render_pages('''
+      <table style="width:136.66666666666487px">
+        <tr>
+          <th style="width:40%"></th>
+          <th colspan="2"><div style="width:82px"></span></th>
+        </tr>
+        <tr>
+          <th style="width:40%"></th>
+          <th><div style="width:12px"></div></th>
+          <th><span style="display:inline-block;width:8px"></span><span
+                    style="display:inline-block;width:8px"></span></th>
+        </tr>
+      </table>
+    ''')
 
 
 @assert_no_logs
@@ -3525,3 +3681,20 @@ def test_table_zero_width():
         </thead>
       </table>
     ''')
+
+
+@assert_no_logs
+def test_table_inline_atomic_nowrap():
+    # Regression test for #2661.
+    page, = render_pages('''
+      <div style="width: 0; font: 2px weasyprint; white-space: nowrap">
+        <table>
+          <tr>
+            <td>a<img src=pattern.png></td>
+    ''')
+    html, = page.children
+    body, = html.children
+    div, = body.children
+    table_wrapper, = div.children
+    assert div.width == 0
+    assert table_wrapper.width == 6

@@ -2,6 +2,30 @@ Common Use Cases
 ================
 
 
+Regenerate PDFs Automatically
+-----------------------------
+
+During development, you can automatically regenerate a PDF whenever an HTML or
+CSS file changes. On Linux, macOS and Windows, install watchexec_.
+
+To watch specific files, run:
+
+.. code-block:: sh
+
+  watchexec --watch document.html --watch style.css -- python -m weasyprint document.html document.pdf
+
+To watch all HTML and CSS files in the current directory and its subdirectories,
+use an extension filter:
+
+.. code-block:: sh
+
+  watchexec -e html,css -- python -m weasyprint document.html document.pdf
+
+Replace the filenames in these examples with your own HTML, CSS and PDF paths.
+
+.. _watchexec: https://watchexec.github.io/
+
+
 Include in Web Applications
 ---------------------------
 
@@ -87,14 +111,22 @@ Adjust Document Dimensions
 
 WeasyPrint does not provide support for adjusting page size or document margins
 via command-line flags. This is best accomplished with the CSS ``@page``
-at-rule. Consider the following example:
+at-rule, which can be added to the document or provided in a stylesheet.
+Consider the following example:
 
 .. code-block:: css
 
   @page {
-    size: Letter; /* Change from the default size of A4 */
+    size: A3 landscape; /* Change from the default size and orientation of A4 portrait */
     margin: 3cm; /* Set margin on each page */
   }
+
+To apply these rules from the command line without creating a separate CSS
+file, use the ``-s`` option with shell process substitution:
+
+.. code-block:: sh
+
+  $ weasyprint input.html output.pdf -s <(echo "@page { size: A3 landscape; margin: 3cm }")
 
 There is much more which can be achieved with the ``@page`` at-rule,
 such as page numbers, headers, etc. Read more about the page_ at-rule.
@@ -158,6 +190,32 @@ also used to define the order of the PDF content.
 Some information is required in your HTML file, including a ``<title>`` tag,
 and a ``lang`` attribute set on the ``<html>`` tag.
 
+PDF/X (Graphics Exchange)
+.........................
+
+PDF/X documents facilitate graphics exchange and adds printing-related requirements such
+as color profiles.
+
+The easiest way to fulfill these requirements is to use device-dependent CMYK colors and
+images everywhere in your document. For colors, you can use the ``device-cmyk()``
+function:
+
+.. code-block:: css
+
+   body { color: device-cmyk(0% 10% 0% 80%) }
+
+You also have to define the output profile color to use.
+
+.. code-block:: css
+
+   @color-profile device-cmyk {
+     components: cyan, magenta, yellow, black;
+     src: url(path/to/cmyk-profile.icc);
+   }
+
+If possible, PDF/X-4 should be preferred: it allows transparency layers that are
+forbidden by previous variants.
+
 Factur-X / ZUGFeRD (Electronic Invoices)
 ........................................
 
@@ -182,63 +240,58 @@ Here is an example of Factur-X document generation.
 
 .. code-block:: xml
 
-  <x:xmpmeta
-      xmlns:x="adobe:ns:meta/"
+  <rdf:RDF
       xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-      xmlns:pdf="http://ns.adobe.com/pdf/1.3/"
       xmlns:fx="urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#"
       xmlns:pdfaExtension="http://www.aiim.org/pdfa/ns/extension/"
       xmlns:pdfaSchema="http://www.aiim.org/pdfa/ns/schema#"
       xmlns:pdfaProperty="http://www.aiim.org/pdfa/ns/property#">
-    <!-- placeholder -->
-    <rdf:RDF>
-      <rdf:Description rdf:about="">
-        <fx:ConformanceLevel>MINIMUM</fx:ConformanceLevel>
-        <fx:DocumentFileName>factur-x.xml</fx:DocumentFileName>
-        <fx:DocumentType>INVOICE</fx:DocumentType>
-        <fx:Version>1.0</fx:Version>
-      </rdf:Description>
-      <rdf:Description rdf:about="">
-        <pdfaExtension:schemas>
-          <rdf:Bag>
-            <rdf:li rdf:parseType="Resource">
-              <pdfaSchema:schema>Factur-X PDFA Extension Schema</pdfaSchema:schema>
-              <pdfaSchema:namespaceURI>urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#</pdfaSchema:namespaceURI>
-              <pdfaSchema:prefix>fx</pdfaSchema:prefix>
-              <pdfaSchema:property>
-                <rdf:Seq>
-                  <rdf:li rdf:parseType="Resource">
-                    <pdfaProperty:name>DocumentFileName</pdfaProperty:name>
-                    <pdfaProperty:valueType>Text</pdfaProperty:valueType>
-                    <pdfaProperty:category>external</pdfaProperty:category>
-                    <pdfaProperty:description>name of the embedded XML invoice file</pdfaProperty:description>
-                  </rdf:li>
-                  <rdf:li rdf:parseType="Resource">
-                    <pdfaProperty:name>DocumentType</pdfaProperty:name>
-                    <pdfaProperty:valueType>Text</pdfaProperty:valueType>
-                    <pdfaProperty:category>external</pdfaProperty:category>
-                    <pdfaProperty:description>INVOICE</pdfaProperty:description>
-                  </rdf:li>
-                  <rdf:li rdf:parseType="Resource">
-                    <pdfaProperty:name>Version</pdfaProperty:name>
-                    <pdfaProperty:valueType>Text</pdfaProperty:valueType>
-                    <pdfaProperty:category>external</pdfaProperty:category>
-                    <pdfaProperty:description>The actual version of the Factur-X XML schema</pdfaProperty:description>
-                  </rdf:li>
-                  <rdf:li rdf:parseType="Resource">
-                    <pdfaProperty:name>ConformanceLevel</pdfaProperty:name>
-                    <pdfaProperty:valueType>Text</pdfaProperty:valueType>
-                    <pdfaProperty:category>external</pdfaProperty:category>
-                    <pdfaProperty:description>The conformance level of the embedded Factur-X data</pdfaProperty:description>
-                  </rdf:li>
-                </rdf:Seq>
-              </pdfaSchema:property>
-            </rdf:li>
-          </rdf:Bag>
-        </pdfaExtension:schemas>
-      </rdf:Description>
-    </rdf:RDF>
-  </x:xmpmeta>
+    <rdf:Description rdf:about="">
+      <fx:ConformanceLevel>MINIMUM</fx:ConformanceLevel>
+      <fx:DocumentFileName>factur-x.xml</fx:DocumentFileName>
+      <fx:DocumentType>INVOICE</fx:DocumentType>
+      <fx:Version>1.0</fx:Version>
+    </rdf:Description>
+    <rdf:Description rdf:about="">
+      <pdfaExtension:schemas>
+        <rdf:Bag>
+          <rdf:li rdf:parseType="Resource">
+            <pdfaSchema:schema>Factur-X PDFA Extension Schema</pdfaSchema:schema>
+            <pdfaSchema:namespaceURI>urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#</pdfaSchema:namespaceURI>
+            <pdfaSchema:prefix>fx</pdfaSchema:prefix>
+            <pdfaSchema:property>
+              <rdf:Seq>
+                <rdf:li rdf:parseType="Resource">
+                  <pdfaProperty:name>DocumentFileName</pdfaProperty:name>
+                  <pdfaProperty:valueType>Text</pdfaProperty:valueType>
+                  <pdfaProperty:category>external</pdfaProperty:category>
+                  <pdfaProperty:description>name of the embedded XML invoice file</pdfaProperty:description>
+                </rdf:li>
+                <rdf:li rdf:parseType="Resource">
+                  <pdfaProperty:name>DocumentType</pdfaProperty:name>
+                  <pdfaProperty:valueType>Text</pdfaProperty:valueType>
+                  <pdfaProperty:category>external</pdfaProperty:category>
+                  <pdfaProperty:description>INVOICE</pdfaProperty:description>
+                </rdf:li>
+                <rdf:li rdf:parseType="Resource">
+                  <pdfaProperty:name>Version</pdfaProperty:name>
+                  <pdfaProperty:valueType>Text</pdfaProperty:valueType>
+                  <pdfaProperty:category>external</pdfaProperty:category>
+                  <pdfaProperty:description>The actual version of the Factur-X XML schema</pdfaProperty:description>
+                </rdf:li>
+                <rdf:li rdf:parseType="Resource">
+                  <pdfaProperty:name>ConformanceLevel</pdfaProperty:name>
+                  <pdfaProperty:valueType>Text</pdfaProperty:valueType>
+                  <pdfaProperty:category>external</pdfaProperty:category>
+                  <pdfaProperty:description>The conformance level of the embedded Factur-X data</pdfaProperty:description>
+                </rdf:li>
+              </rdf:Seq>
+            </pdfaSchema:property>
+          </rdf:li>
+        </rdf:Bag>
+      </pdfaExtension:schemas>
+    </rdf:Description>
+  </rdf:RDF>
 
 ``factur-x.xml``:
 
@@ -303,33 +356,35 @@ Here is an example of Factur-X document generation.
     </rsm:SupplyChainTradeTransaction>
   </rsm:CrossIndustryInvoice>
 
-``invoice.py``:
+``invoice.html``:
+
+.. code-block:: html
+
+  <h1>Invoice</h1>
+
+Command-line::
+
+  weasyprint invoice.html invoice.pdf --attachment=factur-x.xml --attachment-relationship=Data --xmp-metadata=rdf.xml --pdf-variant=pdf/a-3a
+
+Or Python API:
 
 .. code-block:: python
 
-  from pathlib import Path
   from weasyprint import Attachment, HTML
 
-  def generate_rdf_metadata(metadata, variant, version, conformance):
-      original_rdf = generate_original_rdf_metadata(metadata, variant, version, conformance)
-      return Path("rdf.xml").read_bytes().replace(b"<!-- placeholder -->", original_rdf)
-
-  document = HTML(string="<h1>Invoice</h1>").render()
-  generate_original_rdf_metadata = document.metadata.generate_rdf_metadata
+  document = HTML("invoice.html").render()
 
   factur_x_xml = Path("factur-x.xml").read_text()
   attachment = Attachment(string=factur_x_xml, name="factur-x.xml", relationship="Data")
   document.metadata.attachments = [attachment]
 
-  document.metadata.generate_rdf_metadata = generate_rdf_metadata
+  xmp_metadata = Path("rdf.xml").read_text().encode()
+  document.metadata.xmp_metadata = [xmp_metadata]
+
   document.write_pdf("invoice.pdf", pdf_variant="pdf/a-3b")
 
 Of course, the content of these files has to be adapted to the content of real
-invoices. Using XML generators instead of plain text manipulation is also
-highly recommended.
-
-A more detailed blog article is available on `Binary Butterfly’s website
-<https://binary-butterfly.de/artikel/factur-x-zugferd-e-invoices-with-python/>`_.
+invoices.
 
 
 Include PDF Forms

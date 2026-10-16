@@ -22,6 +22,8 @@ PIXELS_BY_CHAR = {
     'M': (255, 0, 255),  # magenta
     'Y': (255, 255, 0),  # yellow
     'K': (0, 0, 0),  # black
+    'P': (50, 76, 103),  # blue CMYK with ICC
+    'Q': (63, 88, 110),  # blue CMYK without ICC
     'r': (255, 0, 0),  # red
     'g': (0, 128, 0),  # half green
     'b': (0, 0, 128),  # half blue
@@ -132,4 +134,4 @@ def html_to_pixels(html):
 def document_to_pixels(document):
     """Render an HTML document to PNG, check its size and return pixel data."""
     image = Image.open(io.BytesIO(document.write_png()))
-    return image.width, image.height, image.getdata()
+    return image.width, image.height, image.get_flattened_data()

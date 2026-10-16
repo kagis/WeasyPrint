@@ -1,16 +1,15 @@
 """Convert specified property values into computed values."""
 
+from functools import partial
 from math import pi
 
-from tinycss2.color4 import parse_color
+from tinycss2.color5 import parse_color
 
 from ..logger import LOGGER
 from ..text.line_break import strut
-from ..urls import get_link_attribute, get_url_tuple
 from .functions import check_math
 from .properties import INITIAL_VALUES, ZERO_PIXELS, Dimension
-from .units import ANGLE_TO_RADIANS, LENGTH_UNITS, to_pixels
-from .validation import validate_non_shorthand
+from .units import LENGTH_UNITS, to_pixels
 
 # Value in pixels of font-size for <absolute-size> keywords: 12pt (16px) for
 # medium, and scaling factors given in CSS3 for others:
@@ -125,6 +124,87 @@ INITIAL_VALUES['size'] = tuple(
     to_pixels(size, None, 'size') for size in INITIAL_PAGE_SIZE)
 
 
+# Maps physical to functions getting block and inline directions.
+PHYSICAL_FUNCTIONS = {}
+
+
+def register_logical(names, prefixes=('',), suffixes=('',)):
+    """Decorator registering logical properties matching physical ``names``."""
+
+    def decorator(function):
+        """Register the properties ``names`` for ``function``."""
+        for name in names:
+            name = name.replace('-', '_')
+            for prefix in prefixes:
+                for suffix in suffixes:
+                    property_name = name
+                    if prefix:
+                        property_name = f'{prefix}_{property_name}'
+                    if suffix:
+                        property_name = f'{property_name}_{suffix}'
+                    PHYSICAL_FUNCTIONS[property_name] = partial(
+                        function, name=name, prefix=prefix, suffix=suffix)
+        return function
+    return decorator
+
+
+@register_logical(('width', 'height'), prefixes=('', 'max', 'min'))
+def physical_size(name, prefix, suffix, block, inline):
+    vertical_main_direction = block in ('ttb', 'btt')
+    vertical_property = 'height' in name
+    logical = 'block' if (vertical_property == vertical_main_direction) else 'inline'
+    return f'{prefix}_{logical}_size' if prefix else f'{logical}_size'
+
+
+@register_logical(
+    ('top', 'left', 'bottom', 'right'),
+    prefixes=('', 'padding', 'margin'))
+@register_logical(
+    ('top', 'left', 'bottom', 'right'),
+    prefixes=('border',), suffixes=('width', 'style', 'color'))
+def physical_inset(name, prefix, suffix, block, inline):
+    if name == 'top':
+        logical = 'block' if block in ('ttb', 'btt') else 'inline'
+        side = 'start' if 'ttb' in (block, inline) else 'end'
+    elif name == 'bottom':
+        logical = 'block' if block in ('ttb', 'btt') else 'inline'
+        side = 'start' if 'btt' in (block, inline) else 'end'
+    elif name == 'left':
+        logical = 'block' if block in ('ltr', 'rtl') else 'inline'
+        side = 'start' if 'ltr' in (block, inline) else 'end'
+    elif name == 'right':
+        logical = 'block' if block in ('ltr', 'rtl') else 'inline'
+        side = 'start' if 'rtl' in (block, inline) else 'end'
+    prefix = f'{prefix or "inset"}_'
+    if suffix:
+        suffix = f'_{suffix}'
+    return f'{prefix}{logical}_{side}{suffix}'
+
+
+@register_logical(
+    ('top_left', 'top_right', 'bottom_left', 'bottom_right'),
+    prefixes=('border',), suffixes=('radius',))
+def physical_radius(name, prefix, suffix, block, inline):
+    vertical, horizontal = name.split('_')
+    if block == 'ttb':
+        block = 'start' if vertical == 'top' else 'end'
+    elif block == 'btt':
+        block = 'start' if vertical == 'bottom' else 'end'
+    elif block == 'ltr':
+        block = 'start' if horizontal == 'left' else 'end'
+    elif block == 'rtl':
+        block = 'start' if horizontal == 'right' else 'end'
+    if inline == 'ttb':
+        inline = 'start' if vertical == 'top' else 'end'
+    elif inline == 'btt':
+        inline = 'start' if vertical == 'bottom' else 'end'
+    elif inline == 'ltr':
+        inline = 'start' if horizontal == 'left' else 'end'
+    elif inline == 'rtl':
+        inline = 'start' if horizontal == 'right' else 'end'
+    return f'{prefix}_{block}_{inline}_{suffix}'
+
+
 # Maps property names to functions returning the computed values
 COMPUTER_FUNCTIONS = {}
 
@@ -140,57 +220,50 @@ def register_computer(name):
     return decorator
 
 
-def compute_attr(style, values):
-    # TODO: use real token parsing instead of casting with Python types, and follow new
-    # syntax. See https://drafts.csswg.org/css-values-5/#attr-notation.
-    func_name, value = values
-    assert func_name == 'attr()'
-    attr_name, type_or_unit, fallback = value
-    try:
-        attr_value = style.element.get(attr_name, fallback)
-        if type_or_unit == 'string':
-            pass  # Keep the string
-        elif type_or_unit == 'url':
-            attr_value = get_url_tuple(attr_value, style.base_url)
-        elif type_or_unit == 'color':
-            attr_value = parse_color(attr_value.strip())
-        elif type_or_unit == 'integer':
-            attr_value = int(attr_value.strip())
-        elif type_or_unit == 'number':
-            attr_value = float(attr_value.strip())
-        elif type_or_unit == '%':
-            attr_value = Dimension(float(attr_value.strip()), '%')
-            type_or_unit = 'length'
-        elif type_or_unit in LENGTH_UNITS:
-            attr_value = Dimension(float(attr_value.strip()), type_or_unit)
-            type_or_unit = 'length'
-        elif type_or_unit in ANGLE_TO_RADIANS:
-            attr_value = Dimension(float(attr_value.strip()), type_or_unit)
-            type_or_unit = 'angle'
-        else:
-            return
-    except Exception:
-        return
-    return (type_or_unit, attr_value)
-
-
 @register_computer('background-image')
 def background_image(style, name, values):
     """Compute lenghts in gradient background-image."""
-    for type_, value in values:
-        if type_ in ('linear-gradient', 'radial-gradient'):
-            value.stop_positions = tuple(
-                length(style, name, pos) if pos is not None else None
-                for pos in value.stop_positions)
-            value.color_hints = tuple(
-                length(style, name, hint) if hint is not None else None
-                for hint in value.color_hints)
-        if type_ == 'radial-gradient':
-            value.center, = compute_position(
-                style, name, (value.center,))
-            if value.size_type == 'explicit':
-                value.size = length_or_percentage_tuple(style, name, value.size)
-    return values
+    return tuple(image(style, name, value) for value in values)
+
+
+@register_computer('border-image-source')
+def image(style, name, image):
+    """Compute lenghts in gradient border-image-source."""
+    type_, value = image
+    if type_ in ('linear-gradient', 'radial-gradient'):
+        value.stop_positions = tuple(
+            length(style, name, pos) if pos is not None else None
+            for pos in value.stop_positions)
+        value.color_hints = tuple(
+            length(style, name, hint) if hint is not None else None
+            for hint in value.color_hints)
+    if type_ == 'radial-gradient':
+        value.center, = compute_position(style, name, (value.center,))
+        if value.size_type == 'explicit':
+            value.size = length_or_percentage_tuple(style, name, value.size)
+    return image
+
+
+@register_computer('color')
+@register_computer('background-color')
+@register_computer('border-top-color')
+@register_computer('border-right-color')
+@register_computer('border-bottom-color')
+@register_computer('border-left-color')
+@register_computer('column-rule-color')
+@register_computer('outline-color')
+@register_computer('text-decoration-color')
+def color(style, name, values):
+    return parse_color(values, style['color_scheme'])
+
+
+@register_computer('box-shadow')
+def box_shadow(style, name, values):
+    return tuple((
+        length(style, name, x), length(style, name, y),
+        length(style, name, blur), length(style, name, spread),
+        parse_color(color, style['color_scheme']), inset,
+    ) for x, y, blur, spread, color, inset in values)
 
 
 @register_computer('background-position')
@@ -234,10 +307,16 @@ def break_before_after(style, name, value):
 @register_computer('margin-left')
 @register_computer('height')
 @register_computer('width')
+@register_computer('block-size')
+@register_computer('inline-size')
 @register_computer('min-width')
 @register_computer('min-height')
+@register_computer('min-block-size')
+@register_computer('min-inline-size')
 @register_computer('max-width')
 @register_computer('max-height')
+@register_computer('max-block-size')
+@register_computer('max-inline-size')
 @register_computer('padding-top')
 @register_computer('padding-right')
 @register_computer('padding-bottom')
@@ -412,35 +491,13 @@ def gap(style, name, value):
 def _content_list(style, values):
     computed_values = []
     for value in values:
-        if value[0] in ('string', 'content', 'url', 'quote', 'leader()'):
-            computed_value = value
-        elif value[0] == 'attr()':
-            assert value[1][1] == 'string'
-            computed_value = compute_attr(style, value)
-        elif value[0] in (
-                'counter()', 'counters()', 'content()', 'element()',
-                'string()'):
-            # Other values need layout context, their computed value cannot be
-            # better than their specified value yet.
-            # See build.compute_content_list.
-            computed_value = value
-        elif value[0] in (
-                'target-counter()', 'target-counters()', 'target-text()'):
-            anchor_token = value[1][0]
-            if anchor_token[0] == 'attr()':
-                attr = compute_attr(style, anchor_token)
-                if attr is None:
-                    computed_value = None
-                else:
-                    computed_value = (value[0], (attr, *value[1][1:]))
-            else:
-                computed_value = value
-        if computed_value is None:
-            LOGGER.warning('Unable to compute %r value for content: %r' % (
-                style.element, ', '.join(str(item) for item in value)))
+        if value[0] in (
+                'string', 'content', 'url', 'quote', 'leader()',
+                'counter()', 'counters()', 'content()', 'element()', 'string()',
+                'attr()', 'target-counter()', 'target-counters()', 'target-text()'):
+            computed_values.append(value)
         else:
-            computed_values.append(computed_value)
-
+            LOGGER.warning('Unable to compute content: %s', value)
     return tuple(computed_values)
 
 
@@ -495,7 +552,7 @@ def compute_float(style, name, value):
     """Compute the ``float`` property."""
     # See https://www.w3.org/TR/CSS21/visuren.html#dis-pos-flo.
     position = style.specified['position']
-    if position in ('absolute', 'fixed') or position[0] == 'running()':
+    if position in ('absolute', 'fixed') or position[0] in ('running()', 'note()'):
         return 'none'
     else:
         return value
@@ -621,47 +678,25 @@ def line_height(style, name, value):
     """Compute the ``line-height`` property."""
     if value == 'normal':
         return value
+    elif check_math(value):
+        return value
     elif not value.unit:
-        return ('NUMBER', value.value)
+        return value.value
     elif value.unit == '%':
         factor = value.value / 100
         font_size_value = style['font_size']
         pixels = factor * font_size_value
+        return Dimension(pixels, 'px')
     else:
-        pixels = length(style, name, value, pixels_only=True)
-    return ('PIXELS', pixels)
-
-
-@register_computer('anchor')
-def anchor(style, name, values):
-    """Compute the ``anchor`` property."""
-    if values != 'none':
-        _, key = values
-        anchor_name = style.element.get(key) or None
-        return anchor_name
-
-
-@register_computer('link')
-def link(style, name, values):
-    """Compute the ``link`` property."""
-    if values == 'none':
-        return
-    type_, value = values
-    if type_ == 'attr()':
-        return get_link_attribute(style.element, value, style.base_url)
-    return values
+        return length(style, name, value)
 
 
 @register_computer('lang')
 def lang(style, name, values):
     """Compute the ``lang`` property."""
-    if values == 'none':
-        return
-    name, key = values
-    if name == 'attr()':
-        return style.element.get(key) or None
-    elif name == 'string':
-        return key
+    name, value = values
+    if name == 'string':
+        return value
 
 
 @register_computer('tab-size')
@@ -684,22 +719,16 @@ def transform(style, name, value):
 @register_computer('vertical-align')
 def vertical_align(style, name, value):
     """Compute the ``vertical-align`` property."""
-    from ..css import resolve_math
-
     # Use +/- half an em for super and sub, same as Pango.
     # (See the SUPERSUB_RISE constant in pango-markup.c)
-    if check_math(value):
-        height, _ = strut(style)
-        result = resolve_math(value, style, 'vertical_align', height)
-        value = validate_non_shorthand((result,), 'vertical-align')[0][1]
-        if value is None:
-            value = 'baseline'
     if value in ('baseline', 'middle', 'text-top', 'text-bottom', 'top', 'bottom'):
         return value
     elif value == 'super':
         return style['font_size'] * 0.5
     elif value == 'sub':
         return style['font_size'] * -0.5
+    elif check_math(value):
+        return value
     elif value.unit == '%':
         height, _ = strut(style)
         return height * value.value / 100

@@ -7,7 +7,7 @@ See https://www.w3.org/TR/CSS21/propidx.html and various CSS3 modules.
 from math import inf
 
 from tinycss2 import parse_component_value_list
-from tinycss2.color4 import parse_color
+from tinycss2.color5 import parse_color
 
 from .. import computed_values
 from ..functions import Function, check_var
@@ -33,8 +33,8 @@ PROPERTIES = {}
 
 class PendingProperty(Pending):
     """Property with validation done when defining calculated values."""
-    def validate(self, tokens, wanted_key):
-        return validate_non_shorthand(tokens, self.name)[0][1]
+    def validate(self, tokens, wanted_key, base_url):
+        return validate_non_shorthand(tokens, self.name, base_url)[0][1]
 
 
 # Validators
@@ -49,7 +49,7 @@ def property(property_name=None, proprietary=False, unstable=False,
 
     :param proprietary:
         Proprietary (vendor-specific, non-standard) are prefixed: anchors can
-        for example be set using ``-weasy-anchor: attr(id)``.
+        for example be set using ``-weasy-anchor: "id"``.
         See https://www.w3.org/TR/CSS/#proprietary
     :param unstable:
         Mark properties that are defined in specifications that didn't reach
@@ -82,22 +82,21 @@ def property(property_name=None, proprietary=False, unstable=False,
 
 def validate_non_shorthand(tokens, name, base_url=None, required=False):
     """Validator for non-shorthand properties."""
-    if name.startswith('--'):
-        # TODO: validate content
-        return ((name, tokens),)
-
-    if not required and name not in KNOWN_PROPERTIES:
+    if not required and name not in KNOWN_PROPERTIES and not name.startswith('--'):
         raise InvalidValues('unknown property')
 
-    if not required and name not in PROPERTIES:
+    if not required and name not in PROPERTIES and not name.startswith('--'):
         raise InvalidValues('property not supported yet')
 
-    function = PROPERTIES[name]
     for token in tokens:
         if check_var(token):
             # Found CSS variable, return pending-substitution values.
             return ((name, PendingProperty(tokens, name)),)
 
+    if name.startswith('--'):
+        return ((name, tokens),)
+
+    function = PROPERTIES[name]
     keyword = get_single_keyword(tokens)
     if keyword in ('initial', 'inherit'):
         value = keyword
@@ -124,11 +123,16 @@ def background_attachment(keyword):
 @property('border-right-color')
 @property('border-bottom-color')
 @property('border-left-color')
+@property('border-block-start-color')
+@property('border-block-end-color')
+@property('border-inline-start-color')
+@property('border-inline-end-color')
 @property('column-rule-color', unstable=True)
 @property('text-decoration-color')
 @single_token
 def other_colors(token):
-    return parse_color(token)
+    if parse_color(token):
+        return token
 
 
 @property()
@@ -136,8 +140,8 @@ def other_colors(token):
 def outline_color(token):
     if get_keyword(token) == 'invert':
         return 'currentcolor'
-    else:
-        return parse_color(token)
+    elif parse_color(token):
+        return token
 
 
 @property()
@@ -153,15 +157,12 @@ def empty_cells(keyword):
     return keyword in ('show', 'hide')
 
 
-@property('color')
+@property()
 @single_token
 def color(token):
     """``*-color`` and ``color`` properties validation."""
-    result = parse_color(token)
-    if result == 'currentcolor':
-        return 'inherit'
-    else:
-        return result
+    if result := parse_color(token):
+        return 'inherit' if result == 'currentcolor' else token
 
 
 @property('background-image', wants_base_url=True)
@@ -276,6 +277,10 @@ def border_spacing(tokens):
 @property('border-bottom-right-radius')
 @property('border-bottom-left-radius')
 @property('border-top-left-radius')
+@property('border-start-start-radius')
+@property('border-start-end-radius')
+@property('border-end-start-radius')
+@property('border-end-end-radius')
 def border_corner_radius(tokens):
     """Validator for the `border-*-radius` properties."""
     lengths = [get_length(token, negative=False, percentage=True) for token in tokens]
@@ -290,12 +295,54 @@ def border_corner_radius(tokens):
 @property('border-right-style')
 @property('border-left-style')
 @property('border-bottom-style')
+@property('border-block-start-style')
+@property('border-block-end-style')
+@property('border-inline-start-style')
+@property('border-inline-end-style')
 @property('column-rule-style', unstable=True)
 @single_keyword
 def border_style(keyword):
     """``border-*-style`` properties validation."""
     return keyword in ('none', 'hidden', 'dotted', 'dashed', 'double',
                        'inset', 'outset', 'groove', 'ridge', 'solid')
+
+
+@property('box-shadow')
+def box_shadow(tokens):
+    """`box-shadow` property validation."""
+    if get_single_keyword(tokens) == 'none':
+        return ()
+    shadows = []
+    while tokens := list(tokens):
+        lengths = []
+        color = None
+        inset = False
+        last_length = False
+        while tokens:
+            token = tokens.pop(0)
+            if token.type == 'literal' and token.value == ',' and tokens:
+                break
+            elif token.type == 'ident' and token.value == 'inset' and not inset:
+                inset = True
+                last_length = False
+            elif (length := get_length(token)) and not (lengths and not last_length):
+                lengths.append(length)
+                last_length = True
+            elif not color and parse_color(token):
+                color = token
+                last_length = False
+            else:
+                return
+        if not (2 <= len(lengths) <= 4):
+            return
+        x, y = lengths.pop(0), lengths.pop(0)
+        blur = lengths.pop(0) if lengths else ZERO_PIXELS
+        if blur.value < 0:
+            return
+        spread = lengths.pop(0) if lengths else ZERO_PIXELS
+        color = color or 'currentcolor'
+        shadows.append((x, y, blur, spread, color, inset))
+    return tuple(shadows)
 
 
 @property('break-before')
@@ -403,6 +450,10 @@ def outline_style(keyword):
 @property('border-right-width')
 @property('border-left-width')
 @property('border-bottom-width')
+@property('border-block-start-width')
+@property('border-block-end-width')
+@property('border-inline-start-width')
+@property('border-inline-end-width')
 @property('column-rule-width', unstable=True)
 @property('outline-width')
 @single_token
@@ -529,7 +580,7 @@ def caption_side(keyword):
 @single_keyword
 def clear(keyword):
     """``clear`` property validation."""
-    return keyword in ('left', 'right', 'both', 'none')
+    return keyword in ('left', 'right', 'inline-start', 'inline-end', 'both', 'none')
 
 
 @property()
@@ -628,10 +679,18 @@ def counter(tokens, default_integer):
 @property('right')
 @property('left')
 @property('bottom')
+@property('inset-block-start')
+@property('inset-block-end')
+@property('inset-inline-start')
+@property('inset-inline-end')
 @property('margin-top')
 @property('margin-right')
 @property('margin-bottom')
 @property('margin-left')
+@property('margin-block-start')
+@property('margin-block-end')
+@property('margin-inline-start')
+@property('margin-inline-end')
 @property('text-underline-offset')
 @single_token
 def lenght_precentage_or_auto(token):
@@ -644,6 +703,8 @@ def lenght_precentage_or_auto(token):
 
 @property('height')
 @property('width')
+@property('block-size')
+@property('inline-size')
 @single_token
 def width_height(token):
     """Validation for the ``width`` and ``height`` properties."""
@@ -729,7 +790,8 @@ def display(tokens):
 @single_keyword
 def float_(keyword):  # XXX do not hide the "float" builtin
     """``float`` property validation."""
-    return keyword in ('left', 'right', 'footnote', 'none')
+    return keyword in (
+        'left', 'right', 'inline-start', 'inline-end', 'footnote', 'none')
 
 
 @property()
@@ -848,7 +910,7 @@ def font_feature_settings(tokens):
             tokens, token = tokens[:-1], tokens[-1]
             if token.type == 'ident':
                 value = {'on': 1, 'off': 0}.get(token.value)
-            elif number := get_number(token, negative=False):
+            elif number := get_number(token, negative=False, integer=True):
                 value = number.value
         elif len(tokens) == 1:
             value = 1
@@ -1051,6 +1113,8 @@ def list_style_type(token):
 
 @property('min-width')
 @property('min-height')
+@property('min-block-size')
+@property('min-inline-size')
 @single_token
 def min_width_height(token):
     """``min-width`` and ``min-height`` properties validation."""
@@ -1065,6 +1129,10 @@ def min_width_height(token):
 @property('padding-right')
 @property('padding-bottom')
 @property('padding-left')
+@property('padding-block-start')
+@property('padding-block-end')
+@property('padding-inline-start')
+@property('padding-inline-end')
 @single_token
 def length_or_precentage(token):
     """``padding-*`` properties validation."""
@@ -1074,6 +1142,8 @@ def length_or_precentage(token):
 
 @property('max-width')
 @property('max-height')
+@property('max-block-size')
+@property('max-inline-size')
 @single_token
 def max_width_height(token):
     """Validation for max-width and max-height"""
@@ -1142,9 +1212,9 @@ def text_overflow(keyword):
 @single_token
 def position(token):
     """``position`` property validation."""
-    if token.type == 'function' and token.name == 'running':
+    if token.type == 'function' and token.name in ('running', 'note'):
         if len(token.arguments) == 1 and token.arguments[0].type == 'ident':
-            return ('running()', token.arguments[0].value)
+            return (f'{token.name}()', token.arguments[0].value)
     keyword = get_single_keyword([token])
     if keyword in ('static', 'relative', 'absolute', 'fixed'):
         return keyword
@@ -1210,7 +1280,7 @@ def text_decoration_thickness(token):
     """``text-decoration-thickness`` property validation."""
     if length := get_length(token, percentage=True):
         return length
-    elif keyword := get_keyword(token) in ('auto', 'from-font'):
+    elif (keyword := get_keyword(token)) in ('auto', 'from-font'):
         return keyword
 
 
@@ -1845,29 +1915,8 @@ def size(tokens):
 @single_token
 def anchor(token):
     """Validation for ``anchor``."""
-    if get_keyword(token) == 'none':
-        return 'none'
-    function = Function(token)
-    if arguments := function.split_space():
-        prototype = (function.name, [argument.type for argument in arguments])
-        if prototype == ('attr', ['ident']):
-            return ('attr()', arguments[0].value)
-
-
-@property(proprietary=True, wants_base_url=True)
-@single_token
-def link(token, base_url):
-    """Validation for ``link``."""
-    if get_keyword(token) == 'none':
-        return 'none'
-    parsed_url = get_url(token, base_url)
-    if parsed_url:
-        return parsed_url
-    function = Function(token)
-    if arguments := function.split_space():
-        prototype = (function.name, [argument.type for argument in arguments])
-        if prototype == ('attr', ['ident']):
-            return ('attr()', arguments[0].value)
+    if token.type == 'string':
+        return token.value
 
 
 @property()
@@ -1952,11 +2001,6 @@ def lang(token):
     """Validation for ``lang``."""
     if get_keyword(token) == 'none':
         return 'none'
-    function = Function(token)
-    if arguments := function.split_space():
-        prototype = (function.name, [argument.type for argument in arguments])
-        if prototype == ('attr', ['ident']):
-            return ('attr()', arguments[0].value)
     elif token.type == 'string':
         return ('string', token.value)
 
@@ -2086,3 +2130,35 @@ def appearance(token):
     """``appearance`` property validation."""
     if (keyword := get_keyword(token)) in ('none', 'auto'):
         return keyword
+
+
+@property()
+def color_scheme(tokens):
+    """``color-scheme`` property validation."""
+    if len(tokens) == 1:
+        keyword = get_single_keyword(tokens)
+        if keyword == 'normal':
+            return keyword
+        elif keyword != 'only':
+            return (keyword,)
+        else:
+            return
+    else:
+        keywords = []
+        only = False
+        for i, token in enumerate(tokens):
+            keyword = get_keyword(token)
+            if keyword == 'only':
+                if only or i not in (0, len(tokens) - 1):
+                    return
+                else:
+                    only = True
+            elif keyword == 'normal':
+                return
+            elif keyword:
+                keywords.append(keyword)
+            else:
+                return
+        if only:
+            keywords.append('only')
+        return tuple(keywords)

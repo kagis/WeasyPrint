@@ -10,8 +10,8 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 import pydyf
-from PIL import Image, ImageFile, ImageOps
-from tinycss2.color4 import parse_color
+from PIL import EpsImagePlugin, Image, ImageFile, ImageOps
+from tinycss2.color5 import parse_color
 
 from . import DEFAULT_OPTIONS
 from .layout.percent import percentage
@@ -22,6 +22,9 @@ from .urls import URLFetchingError, fetch
 # Don’t crash when converting truncated images
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+# Don’t use Ghostscript to render possibly dangerous EPS files.
+EpsImagePlugin.gs_binary = False
+
 
 class ImageLoadingError(ValueError):
     """An error occured when loading an image.
@@ -29,12 +32,6 @@ class ImageLoadingError(ValueError):
     The image data is probably corrupted or in an invalid format.
 
     """
-
-    @classmethod
-    def from_exception(cls, exception):
-        name = type(exception).__name__
-        value = str(exception)
-        return cls(f'{name}: {value}' if value else name)
 
 
 class RasterImage:
@@ -114,7 +111,7 @@ class RasterImage:
         stream.draw_x_object(image_name)
 
     def cache_image_data(self, data, filename=None, slot='source'):
-        if filename:
+        if filename and Path(filename).is_file():
             return LazyLocalImage(filename)
         else:
             key = f'{self.id}-{slot}-{self._dpi or ""}'
@@ -257,7 +254,7 @@ class LazyLocalImage(pydyf.Object):
 class SVGImage:
     def __init__(self, tree, base_url, url_fetcher, context):
         font_config = context.font_config if context else None
-        self._svg = SVG(tree, base_url, font_config)
+        self._svg = SVG(tree, base_url, font_config, url_fetcher)
         self._base_url = base_url
         self._url_fetcher = url_fetcher
         self._context = context
@@ -284,7 +281,7 @@ class SVGImage:
         try:
             self._svg.draw(
                 stream, concrete_width, concrete_height, self._base_url,
-                self._url_fetcher, self._context)
+                self._context)
         except BaseException as exception:
             LOGGER.error('Failed to render SVG image %s', self._base_url)
             LOGGER.debug('Error while rendering SVG image:', exc_info=exception)
@@ -297,43 +294,43 @@ def get_image_from_uri(cache, url_fetcher, options, url, forced_mime_type=None,
         return cache[url]
 
     try:
-        with fetch(url_fetcher, url) as result:
-            if 'string' in result:
-                string = result['string']
-            else:
-                string = result['file_obj'].read()
-            mime_type = forced_mime_type or result['mime_type']
+        with fetch(url_fetcher, url) as response:
+            bytestring = response.read()
+            mime_type = forced_mime_type or response.content_type
 
         image = None
         svg_exceptions = []
         # Try to rely on given mimetype for SVG
         if mime_type == 'image/svg+xml':
             try:
-                tree = ElementTree.fromstring(string)
+                tree = ElementTree.fromstring(bytestring)
                 image = SVGImage(tree, url, url_fetcher, context)
             except Exception as svg_exception:
                 svg_exceptions.append(svg_exception)
         # Try pillow for raster images, or for failing SVG
         if image is None:
             try:
-                pillow_image = Image.open(BytesIO(string))
+                pillow_image = Image.open(BytesIO(bytestring))
             except Exception as raster_exception:
                 if mime_type == 'image/svg+xml':
                     # Tried SVGImage then Pillow for a SVG, abort
-                    raise ImageLoadingError.from_exception(svg_exceptions[0])
+                    raise ImageLoadingError from svg_exceptions[0]
                 try:
                     # Last chance, try SVG
-                    tree = ElementTree.fromstring(string)
+                    tree = ElementTree.fromstring(bytestring)
                     image = SVGImage(tree, url, url_fetcher, context)
                 except Exception:
                     # Tried Pillow then SVGImage for a raster, abort
-                    raise ImageLoadingError.from_exception(raster_exception)
+                    raise ImageLoadingError from raster_exception
             else:
                 # Store image id to enable cache in Stream.add_image
                 image_id = md5(url.encode(), usedforsecurity=False).hexdigest()
-                path = result.get('path')
-                image = RasterImage(
-                    pillow_image, image_id, string, path, cache, orientation, options)
+                try:
+                    image = RasterImage(
+                        pillow_image, image_id, bytestring, response.path, cache,
+                        orientation, options)
+                except Exception as raster_exception:
+                    raise ImageLoadingError from raster_exception
 
     except (URLFetchingError, ImageLoadingError) as exception:
         LOGGER.error('Failed to load image at %r: %s', url, exception)
@@ -412,12 +409,22 @@ def process_color_stops(vector_length, positions, hints, style):
             previous_i = i
 
     # Calculate exponential value for PDF hints, avoid big numbers.
-    hints = [
-        0 if hint <= 0 else
-        2 ** 32 if hint >= 1 else
-        min(2 ** 32, math.log(0.5, hint)) for hint in hints]
+    pdf_hints = []
+    for i, hint in enumerate(hints):
+        if hint <= 0:
+            hint = 0
+        elif hint >= 1:
+            hint = 2 ** 32
+        else:
+            before = positions[i] / vector_length
+            after = positions[i+1] / vector_length
+            if before == after or hint >= after or hint <= before:
+                hint = 1
+            else:
+                hint = min(2 ** 32, math.log(0.5, (hint - before) / (after - before)))
+        pdf_hints.append(hint)
 
-    return positions, hints
+    return positions, pdf_hints
 
 
 def normalize_stop_positions(positions):
@@ -528,14 +535,12 @@ class Gradient:
             for c0, c1, hint in color_couples)
         function = stream.create_stitching_function(
             domain, encode, bounds, sub_functions)
-        # TODO: handle other color spaces.
-        shading = stream.add_shading(
-            shading_type, 'RGB', domain, points, extend, function)
+        shading = stream.add_shading(shading_type, domain, points, extend, function)
         stream.transform(d=scale_y)
 
         if any(alpha != 1 for alpha in alphas):
             alpha_stream = stream.set_alpha_state(
-                0, 0, concrete_width, concrete_height)
+                0, 0, concrete_width, concrete_height / scale_y)
 
             shading_type = 2 if type_ == 'linear' else 3
             sub_functions = (
@@ -544,9 +549,9 @@ class Gradient:
             function = stream.create_stitching_function(
                 domain, encode, bounds, sub_functions)
             alpha_shading = alpha_stream.add_shading(
-                shading_type, 'Gray', domain, points, extend, function)
+                shading_type, domain, points, extend, function, 'DeviceGray')
             alpha_stream.transform(d=scale_y)
-            alpha_stream.stream = [f'/{alpha_shading.id} sh']
+            alpha_stream.paint_shading(alpha_shading.id)
 
         stream.paint_shading(shading.id)
 
@@ -655,7 +660,7 @@ class LinearGradient(Gradient):
                 positions.append(positions[-1] + step)
                 last += step * stop_length
 
-            # Add colors before last step
+            # Add colors before first step
             while first > 0:
                 step = next(previous_steps)
                 colors.insert(0, next(previous_colors))
@@ -764,14 +769,15 @@ class RadialGradient(Gradient):
             center_x, center_y / scale_y, last)
 
         if self.repeating:
-            points, positions, colors = self._repeat(
-                width, height, scale_y, points, positions, colors)
+            points, positions, colors, hints = self._repeat(
+                width, height, scale_y, points, positions, colors, hints)
 
         return scale_y, 'radial', points, positions, colors, hints
 
-    def _repeat(self, width, height, scale_y, points, positions, colors):
+    def _repeat(self, width, height, scale_y, points, positions, colors, hints):
         # Keep original lists and values, they’re useful
         original_colors = colors.copy()
+        original_hints = hints.copy()
         original_positions = positions.copy()
         gradient_length = points[5] - points[2]
 
@@ -787,13 +793,14 @@ class RadialGradient(Gradient):
             # Repeat colors and extrapolate positions
             repeat = 1 + repeat_after
             colors *= repeat
+            hints = ([*hints, 1] * repeat)[:-1]
             positions = [
                 i + position for i in range(repeat) for position in positions]
             points = (*points[:5], points[5] + gradient_length * repeat_after)
 
         if points[2] == 0:
             # Inner circle has 0 radius, no need to repeat inside, return
-            return points, positions, colors
+            return points, positions, colors, hints
 
         # Find how many times we have to repeat the colors inside
         repeat_before = points[2] / gradient_length
@@ -806,6 +813,7 @@ class RadialGradient(Gradient):
         if full_repeat:
             # Repeat colors and extrapolate positions
             colors += original_colors * full_repeat
+            hints += [1, *original_hints] * full_repeat
             positions = [
                 i - full_repeat + position for i in range(full_repeat)
                 for position in original_positions] + positions
@@ -814,7 +822,7 @@ class RadialGradient(Gradient):
         partial_repeat = repeat_before - full_repeat
         if partial_repeat == 0:
             # No partial repeat, return
-            return points, positions, colors
+            return points, positions, colors, hints
 
         # Iterate through positions in reverse order, from the outer
         # circle to the original inner circle, to find positions from
@@ -828,11 +836,12 @@ class RadialGradient(Gradient):
                 # The center is a color of the gradient, truncate original
                 # colors and positions and prepend them
                 colors = original_colors[-i:] + colors
+                hints = [*original_hints[-i:], 1, *hints]
                 new_positions = [
                     position - full_repeat - 1
                     for position in original_positions[-i:]]
                 positions = new_positions + positions
-                return points, positions, colors
+                return points, positions, colors, hints
             if position < ratio:
                 # The center is between two colors of the gradient,
                 # define the center color as the average of these two
@@ -842,14 +851,14 @@ class RadialGradient(Gradient):
                 next_position = original_positions[-(i - 1)]
                 average_colors = [color, color, next_color, next_color]
                 average_positions = [position, ratio, ratio, next_position]
-                zero_color = gradient_average_color(
-                    average_colors, average_positions)
-                colors = [zero_color, *original_colors[-(i - 1):], *colors]
+                zero_color = gradient_average_color(average_colors, average_positions)
+                colors = [zero_color, *original_colors[-(i-1):], *colors]
+                hints = [1, *original_hints[-(i-1):], 1, *hints]
                 new_positions = [
                     position - 1 - full_repeat for position
                     in original_positions[-(i - 1):]]
                 positions = (ratio - 1 - full_repeat, *new_positions, *positions)
-                return points, positions, colors
+                return points, positions, colors, hints
 
     def _resolve_size(self, width, height, center_x, center_y, style):
         """Resolve circle size of the radial gradient."""

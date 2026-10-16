@@ -22,6 +22,7 @@ def flex_layout(context, box, bottom_space, skip_stack, containing_block, page_i
     # TODO: merge this with block_container_layout.
     context.create_flex_formatting_context(box)
     resume_at = None
+    next_page = {'break': 'any', 'page': None}
 
     is_start = skip_stack is None
     box.remove_decoration(start=not is_start, end=False)
@@ -84,9 +85,9 @@ def flex_layout(context, box, bottom_space, skip_stack, containing_block, page_i
     # 3 Determine the flex base size and hypothetical main size of each item.
     parent_box = box.copy()
     percent.resolve_percentages(parent_box, containing_block)
+    parent_box.remove_decoration(start=not is_start, end=False)
     block.block_level_width(parent_box, containing_block)
     children = sorted(box.children, key=lambda item: item.style['order'])
-    original_skip_stack = skip_stack
     if skip_stack is not None:
         (skip, skip_stack), = skip_stack.items()
         if box.style['flex_direction'].endswith('-reverse'):
@@ -142,10 +143,8 @@ def flex_layout(context, box, bottom_space, skip_stack, containing_block, page_i
                     absolute_boxes.append(placeholder)
                 else:
                     fixed_boxes.append(placeholder)
-            elif child.is_running():
-                running_name = child.style['position'][1]
-                page = context.current_page
-                context.running_elements[running_name][page].append(child)
+            elif child.is_running() or child.is_note():
+                context.add_running_element(child)
             continue
         # See https://www.w3.org/TR/css-flexbox-1/#min-size-auto.
         if main == 'width':
@@ -214,6 +213,9 @@ def flex_layout(context, box, bottom_space, skip_stack, containing_block, page_i
                 child.min_height = min(transferred_size, content_size)
             else:
                 child.min_height = content_size
+            if new_child:
+                block.remove_placeholders(
+                    context, new_child.children, absolute_boxes, fixed_boxes)
 
         if child.style['flex_basis'] == 'content':
             flex_basis = 'content'
@@ -296,6 +298,7 @@ def flex_layout(context, box, bottom_space, skip_stack, containing_block, page_i
 
     # 4 Determine the main size of the flex container using the rules of the formatting
     # context in which it participates.
+    original_box_height = box.height
     if main == 'width':
         block.block_level_width(box, containing_block)
     else:
@@ -510,6 +513,9 @@ def flex_layout(context, box, bottom_space, skip_stack, containing_block, page_i
                     child.width = min(max(min_width, new_child.width), max_width)
                 else:
                     child.width = new_child.width
+            if new_child:
+                block.remove_placeholders(
+                    context, new_child.children, absolute_boxes, fixed_boxes)
 
             new_flex_line.append((index, child))
 
@@ -899,11 +905,11 @@ def flex_layout(context, box, bottom_space, skip_stack, containing_block, page_i
         for index, child in line:
             if child.is_flex_item:
                 # TODO: Don't use block_level_layout_switch.
-                new_child, child_resume_at = block.block_level_layout_switch(
+                new_child, child_resume_at, next_page = block.block_level_layout_switch(
                     context, child, bottom_space, child_skip_stack, box, page_is_empty,
                     absolute_boxes, fixed_boxes, adjoining_margins=[],
                     first_letter_style=None, first_line_style=None, discard=discard,
-                    max_lines=None)[:2]
+                    max_lines=None)[:3]
                 if new_child is None:
                     if resume_at:
                         resume_index, = resume_at
@@ -914,14 +920,12 @@ def flex_layout(context, box, bottom_space, skip_stack, containing_block, page_i
                 else:
                     page_is_empty = False
                     box.children.append(new_child)
+                    position_y = new_child.position_y + new_child.border_height()
                     if child_resume_at is not None:
-                        if original_skip_stack:
-                            first_level_skip, = original_skip_stack
-                        else:
-                            first_level_skip = 0
+                        first_level_skip = 0
                         if resume_at:
                             resume_index, = resume_at
-                            first_level_skip += resume_index
+                            first_level_skip = resume_index
                         resume_at = {first_level_skip + index: child_resume_at}
                 if resume_at:
                     break
@@ -931,11 +935,20 @@ def flex_layout(context, box, bottom_space, skip_stack, containing_block, page_i
         if resume_at:
             break
 
+    if original_box_height != 'auto':
+        # Don’t resume if flex items overflow flex container bottom.
+        box_bottom = box.position_y + box.border_height()
+        if context.overflows(box_bottom, position_y):
+            resume_at = None
+
     if box.style['position'] == 'relative':
         # New containing block, resolve the layout of the absolute descendants.
         for absolute_box in absolute_boxes:
             absolute_layout(
                 context, absolute_box, box, fixed_boxes, bottom_space, skip_stack=None)
+
+    for child in box.children:
+        block.relative_positioning(child, (box.width, box.height))
 
     # TODO: Use real algorithm, see https://www.w3.org/TR/css-flexbox-1/#flex-baselines.
     if isinstance(box, boxes.InlineFlexBox):
@@ -953,5 +966,4 @@ def flex_layout(context, box, bottom_space, skip_stack, containing_block, page_i
 
     context.finish_flex_formatting_context(box)
 
-    # TODO: Check these returned values.
-    return box, resume_at, {'break': 'any', 'page': None}, [], False
+    return box, resume_at, next_page, [], False

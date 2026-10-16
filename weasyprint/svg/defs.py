@@ -9,15 +9,11 @@ from .utils import alpha_value, color, parse_url, size, transform
 
 
 def get_use_tree(svg, node, font_size):
-    from . import SVG
-
     parsed_url = parse_url(node.get_href(svg.url))
     svg_url = parse_url(svg.url)
     if svg_url.scheme == 'data':
         svg_url = parse_url('')
-    same_origin = (
-        parsed_url[:3] == ('', '', '') or
-        parsed_url[:3] == svg_url[:3])
+    same_origin = parsed_url[:3] in (('', '', ''), svg_url[:3])
     if parsed_url.fragment and same_origin:
         if parsed_url.fragment in svg.use_cache:
             tree = svg.use_cache[parsed_url.fragment].copy()
@@ -28,18 +24,7 @@ def get_use_tree(svg, node, font_size):
                 return
             else:
                 svg.use_cache[parsed_url.fragment] = tree
-    else:
-        url = parsed_url.geturl()
-        try:
-            bytestring_svg = svg.url_fetcher(url)
-            use_svg = SVG(bytestring_svg, url)
-        except Exception:
-            return
-        else:
-            use_svg.get_intrinsic_size(font_size)
-            tree = use_svg.tree
-
-    return tree
+        return tree
 
 
 def use(svg, node, font_size):
@@ -61,20 +46,11 @@ def use(svg, node, font_size):
                 tree.attrib['height'] = box[1] + box[3]
         tree._etree_node.tag = 'svg'
 
+    tree._children = None  # Force cascade to go through children again
     node.cascade(tree)
     node.override_iter(iter((tree,)))
     x, y = svg.point(node.get('x'), node.get('y'), font_size)
     svg.stream.transform(e=x, f=y)
-
-
-def draw_gradient_or_pattern(svg, node, name, font_size, opacity, stroke):
-    """Draw given gradient or pattern."""
-    if name in svg.gradients:
-        return draw_gradient(
-            svg, node, svg.gradients[name], font_size, opacity, stroke)
-    elif name in svg.patterns:
-        return draw_pattern(
-            svg, node, svg.patterns[name], font_size, opacity, stroke)
 
 
 def draw_gradient(svg, node, gradient, font_size, opacity, stroke):
@@ -101,10 +77,10 @@ def draw_gradient(svg, node, gradient, font_size, opacity, stroke):
     if not is_valid_bounding_box(bounding_box):
         return False
     if gradient.get('gradientUnits') == 'userSpaceOnUse':
-        width, height = svg.inner_width, svg.inner_height
+        bx1, by1, width, height = bounding_box
         matrix = Matrix()
     else:
-        width, height = 1, 1
+        bx1, by1, width, height = 0, 0, 1, 1
         e, f, a, d = bounding_box
         matrix = Matrix(a=a, d=d, e=e, f=f)
 
@@ -180,10 +156,10 @@ def draw_gradient(svg, node, gradient, font_size, opacity, stroke):
         if 0 not in (a0, a1) and (a0, a1) != (1, 1):
             color_couples[i][2] = a0 / a1
 
-    bx1, by1 = 0, 0
     if 'gradientTransform' in gradient.attrib:
+        bx2, by2 = bx1 + width, by1 + height
         bx1, by1 = transform_matrix.invert.transform_point(bx1, by1)
-        bx2, by2 = transform_matrix.invert.transform_point(width, height)
+        bx2, by2 = transform_matrix.invert.transform_point(bx2, by2)
         width, height = bx2 - bx1, by2 - by1
 
         # Ensure that width and height are positive to please some PDF readers
@@ -207,8 +183,7 @@ def draw_gradient(svg, node, gradient, font_size, opacity, stroke):
         for c0, c1, n in color_couples)
     function = group.create_stitching_function(
         domain, encode, bounds, sub_functions)
-    shading = group.add_shading(
-        shading_type, 'RGB', domain, coords, extend, function)
+    shading = group.add_shading(shading_type, domain, coords, extend, function)
 
     if any(alpha != 1 for alpha in alphas):
         alpha_stream = group.set_alpha_state(bx1, by1, width, height)
@@ -222,8 +197,8 @@ def draw_gradient(svg, node, gradient, font_size, opacity, stroke):
         function = group.create_stitching_function(
             domain, encode, bounds, sub_functions)
         alpha_shading = alpha_stream.add_shading(
-            shading_type, 'Gray', domain, coords, extend, function)
-        alpha_stream.stream = [f'/{alpha_shading.id} sh']
+            shading_type, domain, coords, extend, function, 'DeviceGray')
+        alpha_stream.paint_shading(alpha_shading.id)
 
     group.paint_shading(shading.id)
     pattern.set_alpha(1)
@@ -457,7 +432,7 @@ def draw_pattern(svg, node, pattern, font_size, opacity, stroke):
     group = stream_pattern.add_group(0, 0, pattern_width, pattern_height)
     Pattern(pattern, svg).draw(
         group, pattern_width, pattern_height, svg.base_url,
-        svg.url_fetcher, svg.context)
+        svg.context)
     stream_pattern.draw_x_object(group.id)
     svg.stream.set_color_space('Pattern', stroke=stroke)
     svg.stream.set_color_special(stream_pattern.id, stroke=stroke)
@@ -515,9 +490,3 @@ def paint_mask(svg, node, mask, font_size):
     svg.stream = svg.stream.set_alpha_state(x, y, width, height)
     svg.draw_node(mask, font_size)
     svg.stream = svg_stream
-
-
-def clip_path(svg, node, font_size):
-    """Store a clip path definition."""
-    if 'id' in node.attrib:
-        svg.paths[node.attrib['id']] = node

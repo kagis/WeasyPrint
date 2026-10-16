@@ -66,11 +66,11 @@ def test_linear_gradients_4(assert_pixels):
 @assert_no_logs
 def test_linear_gradients_5(assert_pixels):
     assert_pixels('''
+        rBrrzBrrrB
         rBrrrBrrrB
         rBrrrBrrrB
         rBrrrBrrrB
-        rBrrrBrrrB
-        rBrrrBrrrB
+        rBrrzBrrrB
     ''', '''
       <style>@page { size: 10px 5px; background: repeating-linear-gradient(
       to right, blue 50%, blue 60%, red 60%, red 90%
@@ -324,6 +324,121 @@ def test_radial_gradients_5(assert_pixels):
         SzzzzzzzzS
     ''', '''<style>@page { size: 10px 16px; background:
       radial-gradient(red 50%, rgba(255, 0, 0, 0.751) 50%)''')
+
+
+@assert_no_logs
+def test_radial_gradients_negative(assert_pixels):
+    assert_pixels('''
+        BzzzzzzzzB
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzBBzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        BzzzRRzzzB
+        BzzzRRzzzB
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzBBzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        BzzzzzzzzB
+    ''', '''<style>@page { size: 10px 16px; background:
+      radial-gradient(circle, red -1px, red 3px, blue 3px, blue 6px)''')
+
+
+@assert_no_logs
+def test_radial_gradients_repeating(assert_pixels):
+    assert_pixels('''
+        RzzzzzzzzR
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzBBzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zBzzRRzzBz
+        zBzzRRzzBz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzBBzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        RzzzzzzzzR
+    ''', '''<style>@page { size: 10px 16px; background:
+      repeating-radial-gradient(circle, red 0, red 3px, blue 3px, blue 6px)''')
+
+
+@assert_no_logs
+def test_radial_gradients_repeating_outer(assert_pixels):
+    assert_pixels('''
+        RzzzzzzzzR
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzBBzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zBzzRRzzBz
+        zBzzRRzzBz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzBBzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        RzzzzzzzzR
+    ''', '''<style>@page { size: 10px 16px; background:
+      repeating-radial-gradient(circle, red 6px, red 9px, blue 9px, blue 12px)''')
+
+
+@assert_no_logs
+def test_radial_gradients_repeating_outer_partial(assert_pixels):
+    assert_pixels('''
+        RzzzzzzzzR
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzBBzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zBzzRRzzBz
+        zBzzRRzzBz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzBBzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        RzzzzzzzzR
+    ''', '''<style>@page { size: 10px 16px; background:
+      repeating-radial-gradient(circle, blue 3px, blue 6px, red 6px, red 9px)''')
+
+
+@assert_no_logs
+def test_radial_gradients_repeating_negative(assert_pixels):
+    assert_pixels('''
+        RzzzzzzzzR
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzBBzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zBzzRRzzBz
+        zBzzRRzzBz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzBBzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        zzzzzzzzzz
+        RzzzzzzzzR
+    ''', '''<style>@page { size: 10px 16px; background:
+      repeating-radial-gradient(circle, blue -3px, blue 0, red 0, red 3px)''')
 
 
 @assert_no_logs

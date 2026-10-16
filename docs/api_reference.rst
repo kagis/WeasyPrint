@@ -56,7 +56,6 @@ Python API
     :members:
 .. autoclass:: CSS(input, **kwargs)
 .. autoclass:: Attachment(input, **kwargs)
-.. autofunction:: default_url_fetcher
 .. autodata:: DEFAULT_OPTIONS
 
 .. module:: weasyprint.document
@@ -67,6 +66,13 @@ Python API
 .. autoclass:: Page()
     :members:
     :exclude-members: paint
+
+.. module:: weasyprint.urls
+.. autoclass:: URLFetcher
+    :members:
+    :member-order: bysource
+.. autoclass:: URLFetcherResponse
+.. autoclass:: FatalURLFetchingError
 
 .. module:: weasyprint.text.fonts
 .. autoclass:: FontConfiguration()
@@ -250,6 +256,7 @@ The CSS 2.1 features listed here are **not** supported:
 .. _Bi-directional text: https://www.w3.org/TR/CSS21/visuren.html#direction
 .. _System colors: https://www.w3.org/TR/CSS21/ui.html#system-colors
 .. _system fonts: https://www.w3.org/TR/CSS21/fonts.html#propdef-font
+.. _CSS Color Module Level 3: https://www.w3.org/TR/css-color-3/
 
 To the best of our knowledge, everything else that applies to the
 print media **is** supported. Please report a bug if you find this list
@@ -380,7 +387,6 @@ From `CSS Fonts Module Level 4`_ we only support the
 .. _CSS Fonts Module Level 3: https://www.w3.org/TR/css-fonts-3/
 .. _CSS Fonts Module Level 4: https://www.w3.org/TR/css-fonts-4/
 
-
 CSS Paged Media Module Level 3
 ++++++++++++++++++++++++++++++
 
@@ -436,6 +442,27 @@ over the rendering of difficult pages with ``footnote-policy``.
 .. _Page selectors: https://www.w3.org/TR/css-gcpm-3/#document-page-selectors
 .. _running elements: https://www.w3.org/TR/css-gcpm-3/#running-elements
 .. _Footnotes: https://www.w3.org/TR/css-gcpm-3/#footnotes
+
+CSS Notes
++++++++++
+
+The `CSS Notes Module`_ is an unofficial draft "for the creation and positioning of
+notes in both continuous and paged media."
+
+The properties and features proposed by this module are not stable and may change in the
+future, they should be used for testing purpose only.
+
+The ``note()`` function and the ``all-once`` parameter of the ``element`` function are
+supported.
+
+The ``@note-area`` at-block is supported, without the features of page floats.
+
+The ``::note-call``, ``::note-marker`` and ``::note-callback`` pseudo-elements are
+supported.
+
+The ``note-policy`` property is **not** implemented.
+
+.. _CSS Notes Module: https://css-print-lab.github.io/specs/notes-in-css-print/
 
 CSS Generated Content Module Level 3
 ++++++++++++++++++++++++++++++++++++
@@ -505,20 +532,30 @@ The other features of this module are **not** implemented:
 .. _user agent stylesheet: https://github.com/Kozea/WeasyPrint/blob/main/weasyprint/css/html5_ua.css
 .. _Leaders: https://www.w3.org/TR/css-content-3/#leaders
 
-CSS Color Module Level 3
-++++++++++++++++++++++++
+CSS Color Module Level 4 / 5
+++++++++++++++++++++++++++++
 
-The `CSS Color Module Level 3`_ is a recommendation defining "CSS properties
-which allow authors to specify the foreground color and opacity of an
-element". Its main goal is to specify how colors are defined, including color
-keywords and the ``#rgb``, ``#rrggbb``, ``rgb()``, ``rgba()``, ``hsl()``,
-``hsla()`` syntaxes. Opacity and alpha compositing are also defined in this
-document.
+The `CSS Color Module Level 4`_ is a recommendation defining "CSS properties which allow
+authors to specify the foreground color and opacity of the text content of an element".
+Its main goal is to specify how colors are defined, including color keywords and many
+color notations including ``#rgba``, ``rgb()``, ``hsl()``, ``hwb()``, ``lab()``, etc.
+The standard ``color()`` function gives a common way to define colors giving their color
+space. Opacity and alpha compositing are also defined in this document.
 
 This recommendation is fully implemented in WeasyPrint, except the deprecated
 System Colors.
 
-.. _CSS Color Module Level 3: https://www.w3.org/TR/css-color-3/
+The `CSS Color Module Level 5`_ is a working draft adding "color modification functions,
+custom color spaces (ICC profiles), ``contrast-color()``, ``light-dark()`` and
+``device-cmyk()``" to level 4.
+
+WeasyPrint supports the ``light-dark()`` and ``device-cmyk()`` properties, and the
+``@color-profile`` at-rule.
+
+WeasyPrint does **not** support the ``color-mix()`` and ``contrast-color()`` properties.
+
+.. _CSS Color Module Level 4: https://www.w3.org/TR/css-color-4/
+.. _CSS Color Module Level 5: https://www.w3.org/TR/css-color-5/
 
 CSS Transforms Module Level 1
 +++++++++++++++++++++++++++++
@@ -556,26 +593,27 @@ background layers per box), including the ``background``, ``background-color``,
 ``background-position``, ``background-clip``, ``background-origin`` and
 ``background-size`` properties.
 
-WeasyPrint also supports the `rounded corners part`_ of this module, including
+WeasyPrint supports the `rounded corners part`_ of this module, including
 the ``border-radius`` property.
 
-WeasyPrint also supports the `border images part`_ of this module, including the
+WeasyPrint supports the `border images part`_ of this module, including the
 ``border-image``, ``border-image-source``, ``border-image-slice``,
 ``border-image-width``, ``border-image-outset`` and ``border-image-repeat``
 properties.
 
-WeasyPrint does **not** support the `box shadow part`_ of this module,
-including the ``box-shadow`` property. This feature has been implemented in a
-`git branch`_ that is not released, as it relies on raster implementation of
-shadows.
+WeasyPrint supports the `box shadow part`_ of this module, including the
+``box-shadow`` property. Blur should be avoided, as it is approximated using
+gradients, which may be rendered poorly by PDF readers, and are limited in
+some extreme situations (very large or uneven border radii, very large blur
+regions, etc.) Real Gaussian blur requires raster images that are not adapted
+to WeasyPrint’s vector PDF output.
 
 .. _CSS Backgrounds and Borders Level 3: https://www.w3.org/TR/css-backgrounds-3/
 .. _border part: https://www.w3.org/TR/css-backgrounds-3/#borders
 .. _background part: https://www.w3.org/TR/css-backgrounds-3/#backgrounds
 .. _rounded corners part: https://www.w3.org/TR/css-backgrounds-3/#corners
 .. _border images part: https://www.w3.org/TR/css-backgrounds-3/#border-images
-.. _box shadow part: https://www.w3.org/TR/css-backgrounds-3/#misc
-.. _git branch: https://github.com/Kozea/WeasyPrint/pull/149
+.. _box shadow part: https://www.w3.org/TR/css-backgrounds-3/#box-shadow
 
 CSS Image Values and Replaced Content Module Level 3 / 4
 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -636,31 +674,37 @@ The ``text-overflow``, ``block-ellipsis``, ``line-clamp``, ``max-lines`` and
 
 .. _CSS Overflow Module Level 3: https://www.w3.org/TR/2020/WD-css-overflow-3-20200603/
 
-CSS Values and Units Module Level 3
-+++++++++++++++++++++++++++++++++++
+CSS Values and Units Module Level 3 / 4
++++++++++++++++++++++++++++++++++++++++
 
 The `CSS Values and Units Module Level 3`_ defines various units and
 keywords used in "value definition field of each CSS property".
+
+The `CSS Values and Units Module Level 4`_ adds many new units, unit types and math
+functions.
 
 The ``initial`` and ``inherit`` CSS-wide keywords are supported, but the
 ``unset`` keyword is **not** supported.
 
 Quoted strings, URLs and numeric data types are supported.
 
-Font-related lengths (``em``, ``ex``, ``ch``, ``rem``), absolute lengths
-(``cm``, ``mm``, ``q``, ``in``, ``pt``, ``pc``, ``px``), angles (``rad``,
-``grad``, ``turn``, ``deg``), resolutions (``dpi``, ``dpcm``, ``dppx``) are
-supported.
+Font-relative lengths (``*em``, ``*ex``, ``*ch``, ``*cap``, ``*ic``, ``*lh``),
+viewport-relative lengths (``*vw``, ``*vh``, ``*vi``, ``*vb``, ``*vmin``, ``*vmax``),
+absolute lengths (``cm``, ``mm``, ``q``, ``in``, ``pt``, ``pc``, ``px``), angles
+(``rad``, ``grad``, ``turn``, ``deg``), resolutions (``dpi``, ``dpcm``, ``dppx``, ``x``)
+are supported.
+
+Unspecified page-relative units (``pvw``, ``pvh``…) are also supported. They are
+relative to the whole page size (including page margins), while all the other units are
+relative to the page area size (without page margins).
 
 The ``attr()`` functional notation is allowed in the ``content`` and
 ``string-set`` properties.
 
-The ``calc()`` function is **not** supported.
-
-Viewport-percentage lengths (``vw``, ``vh``, ``vmin``, ``vmax``) are **not**
-supported.
+All the mathematical functions (``calc()``…) are supported.
 
 .. _CSS Values and Units Module Level 3: https://www.w3.org/TR/css3-values/
+.. _CSS Values and Units Module Level 4: https://www.w3.org/TR/css-values-4/
 
 CSS Multi-column Layout Module
 ++++++++++++++++++++++++++++++
@@ -811,10 +855,22 @@ Unsupported or untested:
 
 .. _CSS Grid Layout Module Level 2: https://www.w3.org/TR/css-grid-2/
 
-CSS Basic User Interface Module Level 3/4
-+++++++++++++++++++++++++++++++++++++++++
+CSS Logical Properties and Values Module Level 1
+++++++++++++++++++++++++++++++++++++++++++++++++
 
-The `CSS Basic User Interface Module Level 3/4`_ "enables authors to style user
+The `CSS Logical Properties and Values Module Level 1`_ "defines how to map between
+flow-relative and physical terms."
+
+All the logical properties and shorthands based on ``start``, ``end``, ``block`` and
+``inline`` are supported. But, as ``writing-mode`` is not supported, the ``block`` and
+``inline`` axes always correspond to the vertical and horizontal axes.
+
+.. _Logical Properties and Values Module Level 1: https://www.w3.org/TR/css-logical-1/
+
+CSS Basic User Interface Module Level 4
++++++++++++++++++++++++++++++++++++++++
+
+The `CSS Basic User Interface Module Level 4`_ "enables authors to style user
 interface related properties and values."
 
 The ``outline-width``, ``outline-style``, ``outline-color`` properties and the
@@ -829,3 +885,5 @@ form fields as PDF form fields (supported for text inputs, check boxes, text
 areas, and select only).
 
 The ``accent-color`` property is **not** supported.
+
+.. _CSS Basic User Interface Module Level 4: https://www.w3.org/TR/css-ui-4/

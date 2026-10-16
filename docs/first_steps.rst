@@ -9,19 +9,19 @@ Installation
 
 WeasyPrint |version| depends on:
 
-* Python_ ≥ 3.9.0
+* Python_ ≥ 3.11.0
 * Pango_ ≥ 1.44.0
-* pydyf_ ≥ 0.10.0
+* pydyf_ ≥ 0.13.0
 * CFFI_ ≥ 0.6
 * tinyhtml5_ ≥ 2.0.0b1
-* tinycss2_ ≥ 1.3.0
-* cssselect2_ ≥ 0.8.0
+* tinycss2_ ≥ 1.5.0
+* cssselect2_ ≥ 0.10.0
 * Pyphen_ ≥ 0.9.1
 * Pillow_ ≥ 9.1.0
 * fontTools_ ≥ 4.59.2
 
 .. _Python: https://www.python.org/
-.. _Pango: https://pango.gnome.org/
+.. _Pango: https://pango.org/
 .. _CFFI: https://cffi.readthedocs.io/
 .. _pydyf: https://doc.courtbouillon.org/pydyf/
 .. _tinyhtml5: https://doc.courtbouillon.org/tinyhtml5/
@@ -44,7 +44,7 @@ Ubuntu_, Fedora_, Archlinux_, Gentoo_…
 .. _Debian: https://packages.debian.org/search?keywords=weasyprint&searchon=names&suite=all&section=all
 .. _Ubuntu: https://packages.ubuntu.com/search?keywords=weasyprint&searchon=names&suite=all&section=all
 .. _Fedora: https://src.fedoraproject.org/rpms/weasyprint
-.. _Archlinux: https://aur.archlinux.org/packages/python-weasyprint
+.. _Archlinux: https://archlinux.org/packages/extra/any/python-weasyprint/
 .. _Gentoo: https://packages.gentoo.org/packages/dev-python/weasyprint
 
 If WeasyPrint is not available on your distribution, or if you want to use a
@@ -70,8 +70,8 @@ in a `virtual environment`_ using `pip`_::
 .. _pip: https://pip.pypa.io/
 
 
-Alpine ≥ 3.17
-+++++++++++++
+Alpine
+++++++
 
 To install WeasyPrint using your distribution’s package::
 
@@ -107,8 +107,8 @@ following packages::
   pacman -S python-pip pango gcc libjpeg-turbo openjpeg2
 
 
-Debian ≥ 11
-+++++++++++
+Debian
+++++++
 
 To install WeasyPrint using your distribution’s package::
 
@@ -125,8 +125,8 @@ following packages::
   apt install python3-pip libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 libjpeg-dev libopenjp2-7-dev libffi-dev
 
 
-Fedora ≥ 39
-+++++++++++
+Fedora
+++++++
 
 To install WeasyPrint using your distribution’s package::
 
@@ -140,10 +140,10 @@ the following packages::
 To install WeasyPrint inside a virtualenv without using wheels, you need the
 following packages::
 
-  dnf install python3-pip pango gcc python3-devel gcc-c++ zlib-devel libjpeg-devel openjpeg2-devel libffi-devel
+  dnf install python3-pip pango gcc python3-devel gcc-c++ zlib-devel libjpeg-devel openjpeg2-devel libffi-devel harfbuzz-vector
 
 
-Ubuntu ≥ 20.04
+Ubuntu ≥ 24.04
 ++++++++++++++
 
 To install WeasyPrint using your distribution’s package::
@@ -187,30 +187,30 @@ the latest release.
 If you want to use WeasyPrint as a Python library, you’ll have to follow a few
 extra steps. Please read this chapter carefully.
 
-The first step is to install the latest version of Python from the `Microsoft
-Store`_.
+The first step is to install the `Python Install Manager`_ from the Microsoft
+Store.
 
 When Python is installed, you have to install Pango and its dependencies. The
 easiest way to install these libraries is to use MSYS2. Here are the steps you
 have to follow:
 
 - Install `MSYS2`_ keeping the default options.
-- After installation, in MSYS2’s shell, execute ``pacman -S mingw-w64-x86_64-pango``.
+- After installation, in MSYS2 UCRT64 shell, execute ``pacman -S mingw-w64-ucrt-x86_64-pango``.
 - Close MSYS2’s shell.
 
 You can then launch a Windows command prompt by clicking on the Start menu,
 typing ``cmd`` and clicking the "Command Prompt" icon. Install WeasyPrint in a
 `virtual environment`_ using `pip`_::
 
-  python3 -m venv venv
+  python -m venv venv
   venv\Scripts\activate.bat
-  python3 -m pip install weasyprint
-  python3 -m weasyprint --info
+  python -m pip install weasyprint
+  python -m weasyprint --info
 
 .. _executable: https://github.com/Kozea/WeasyPrint/releases
 .. _#2081: https://github.com/Kozea/WeasyPrint/issues/2081
 .. _#2092: https://github.com/Kozea/WeasyPrint/issues/2092
-.. _Microsoft Store: https://apps.microsoft.com/store/search/python
+.. _Python Install Manager: https://apps.microsoft.com/detail/9nq7512cxl7t
 .. _MSYS2: https://www.msys2.org/#installation
 
 
@@ -298,7 +298,7 @@ On Windows, you can set the ``WEASYPRINT_DLL_DIRECTORIES`` environment variable
 to list the folders where the DLL files can be found. For example, in
 ``cmd.exe``::
 
-  set WEASYPRINT_DLL_DIRECTORIES=C:\msys64\mingw64\bin
+  set WEASYPRINT_DLL_DIRECTORIES=C:\msys64\ucrt64\bin
 
 On macOS, you can set the ``DYLD_FALLBACK_LIBRARY_PATH`` environment variable::
 
@@ -482,43 +482,66 @@ WeasyPrint goes through a *URL fetcher* to fetch external resources such as
 images or CSS stylesheets. The default fetcher can natively open file and
 HTTP URLs, but the HTTP client does not support advanced features like cookies
 or authentication. This can be worked-around by passing a custom
-``url_fetcher`` callable to the :class:`HTML` or :class:`CSS` classes.
-It must have the same signature as :func:`default_url_fetcher`.
+:class:`URLFetcher <urls.URLFetcher>` to the :class:`HTML` or :class:`CSS`
+classes.
 
-Custom fetchers can choose to handle some URLs and defer others
-to the default fetcher:
+Some features, such as the timeout delay, can be configured as parameters:
 
 .. code-block:: python
 
-    from weasyprint import default_url_fetcher, HTML
+    from weasyprint import HTML
+    from weasyprint.urls import URLFetcher
 
-    def my_fetcher(url):
-        if url.startswith('graph:'):
-            graph_data = map(float, url[6:].split(','))
-            string = generate_graph(graph_data)
-            return {'string': string, 'mime_type': 'image/png'}
-        return default_url_fetcher(url)
+    HTML(string='<html>', url_fetcher=URLFetcher(timeout=20)).write_pdf('out.pdf')
+
+Custom fetchers can also choose to handle some URLs and defer others to the default
+fetcher:
+
+.. code-block:: python
+
+    from weasyprint import HTML
+    from weasyprint.urls import URLFetcher, URLFetcherResponse
+
+    class MyFetcher(URLFetcher):
+        def fetch(self, url, headers=None):
+            if url.startswith('graph:'):
+                graph_data = [float(value) for value in url[6:].split(',')]
+                string = generate_graph(graph_data)
+                return URLFetcherResponse(url, string, {'Content-Type': 'image/png'})
+            return super().fetch(url, headers)
 
     source = '<img src="graph:42,10.3,87">'
-    HTML(string=source, url_fetcher=my_fetcher).write_pdf('out.pdf')
+    HTML(string=source, url_fetcher=MyFetcher()).write_pdf('out.pdf')
+
+By default, all errors raised by the fetcher are caught by WeasyPrint and emit a
+warning. If you want some errors to be fatal and stop the rendering, you can raise a
+:class:`urls.FatalURLFetchingError`.
+
+.. code-block:: python
+
+    from weasyprint import HTML
+    from weasyprint.urls import URLFetcher, FatalURLFetchingError
+
+    class MyFetcher(URLFetcher):
+        def fetch(self, url, headers=None):
+            try:
+                return super().fetch(url, headers)
+            except Exception as exception:
+                if url.endswith('.css'):
+                    # Stop the rendering if a problem happens with a stylesheet.
+                    message = f'Problem with stylesheet at {url}'
+                    raise FatalURLFetchingError(message) from exception
+                else:
+                    # Raise original error that will be caught by WeasyPrint.
+                    raise exception
+
+    HTML(string='<html>', url_fetcher=MyFetcher()).write_pdf('out.pdf')
 
 Flask-WeasyPrint_ for Flask_ and Django-Weasyprint_ for Django_ both make
 use of a custom URL fetcher to integrate WeasyPrint and use the filesystem
 instead of a network call for static and media files.
 
-A custom fetcher should be returning a :obj:`dict` with
-
-* One of ``string`` (a :obj:`bytestring <bytes>`) or ``file_obj`` (a
-  :term:`file object`).
-* Optionally: ``mime_type``, a MIME type extracted e.g. from a *Content-Type*
-  header. If not provided, the type is guessed from the file extension in the
-  URL.
-* Optionally: ``encoding``, a character encoding extracted e.g. from a
-  *charset* parameter in a *Content-Type* header
-* Optionally: ``redirected_url``, the actual URL of the resource if there were
-  e.g. HTTP redirects.
-* Optionally: ``filename``, the filename of the resource. Usually derived from
-  the *filename* parameter in a *Content-Disposition* header
+A custom fetcher should be returning a :class:`urls.URLFetcherResponse`.
 
 If a ``file_obj`` is given, the resource will be closed automatically by
 the function internally used by WeasyPrint to retrieve data.
@@ -636,6 +659,29 @@ untrusted users, you should:
 - use a custom :ref:`URL fetcher <URL Fetchers>` that doesn't allow ``file://``
   URLs or filters access depending on given paths.
 - follow solutions listed in :ref:`Long Renderings`.
+
+Attachments
+~~~~~~~~~~~
+
+WeasyPrint offers different ways to add :ref:`attachments <Attach Files>` into
+the PDFs it generates. All the files that WeasyPrint can reach, both local and
+distant, can be included and will be available to PDF readers.
+
+It means that, by default, with untrusted HTML or CSS, the PDFs generated by
+WeasyPrint can include all the files available to the computer user launching
+WeasyPrint.
+
+Some PDF readers also allow file execution of PDF attachments. So, if the
+attached file is in a format that can be executed, like a shell script for
+example, users that get PDFs generated by WeasyPrint can execute these files
+on their computers.
+
+If you use WeasyPrint on a server with HTML or CSS samples coming from
+untrusted users, you should:
+
+- restrict your process access to trusted files using sandboxing solutions,
+- use a custom :ref:`URL fetcher <URL Fetchers>` that filters access depending
+  on given paths or giver protocols.
 
 System Information Leaks
 ~~~~~~~~~~~~~~~~~~~~~~~~

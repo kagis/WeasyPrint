@@ -3,7 +3,7 @@
 import pytest
 
 from weasyprint.css import InitialStyle
-from weasyprint.formatting_structure.build import capitalize
+from weasyprint.formatting_structure.text import capitalize
 from weasyprint.text.fonts import FontConfiguration
 from weasyprint.text.line_break import split_first_line
 
@@ -83,6 +83,54 @@ def test_line_breaking_nbsp():
     assert line_1.children[2].text == ' c'
     assert line_2.children[0].text == 'd\xa0'
     assert line_2.children[1].children[0].text == 'ef'
+
+
+@assert_no_logs
+def test_line_breaking_trailing_inline_width():
+    page, = render_pages('''
+      <style>
+        @page { size: 520px 180px; margin: 20px }
+        body {
+          margin: 0;
+          font-family: weasyprint;
+          font-size: 16px;
+          line-height: 1.25;
+        }
+        div {
+          width: 27ch;
+          text-align: right;
+          border-right: 1px solid black;
+        }
+      </style>
+      <div>
+        <span>
+          aaaaaaaaaa bbbbbbbbbb cccccccccc ddddd <span>e. 43</span>
+          ff&nbsp;<span>ggggg</span>.
+        </span>
+      </div>
+    ''')
+    html, = page.children
+    body, = html.children
+    div, = body.children
+    _, line_2, line_3 = div.children
+    span_2, = line_2.children
+    text_2, nested_2 = span_2.children
+    number, = nested_2.children
+    span_3, = line_3.children
+    text_3, nested_3, dot = span_3.children
+    word, = nested_3.children
+
+    assert text_2.text == 'cccccccccc ddddd '
+    assert number.text == 'e. 43'
+    assert text_3.text == 'ff\xa0'
+    assert word.text == 'ggggg'
+    assert dot.text == '.'
+
+    div_right = div.position_x + div.width
+    number_right = nested_2.position_x + nested_2.width
+    span_right = span_2.position_x + span_2.width
+    assert number_right == pytest.approx(div_right)
+    assert span_right == pytest.approx(number_right)
 
 
 @assert_no_logs
@@ -770,6 +818,18 @@ def test_hyphenate_manual_4():
 
 
 @assert_no_logs
+def test_hyphenate_manual_keep_hyphen():
+    # Regression test for #2614.
+    page, = render_pages(
+        '<html style="width: 6em; font-family: weasyprint">'
+        '<body style="hyphens: manual">super&shy;aa bb')
+    html, = page.children
+    body, = html.children
+    lines = body.children
+    assert lines[0].children[0].text == 'super\xad‐'
+
+
+@assert_no_logs
 def test_hyphenate_limit_zone_1():
     page, = render_pages(
         '<html style="width: 12em; font-family: weasyprint">'
@@ -845,8 +905,8 @@ def test_hyphen_nbsp():
     html, = page.children
     body, = html.children
     line1, line2 = body.children
-    assert line1.children[0].children[0].text == "this hy‐"
-    assert line2.children[0].children[0].text == "phenation"
+    assert line1.children[0].children[0].text == 'this hy‐'
+    assert line2.children[0].children[0].text == 'phenation'
 
 
 @assert_no_logs
@@ -904,8 +964,8 @@ def test_hyphenate_limit_chars_punctuation(css):
     ('normal', 'aaaaaaaa', lambda a: a == 1, 'aaaaaaaa'),
     ('break-word', 'hyphenations', lambda a: a > 3,
      'hy\u2010phen\u2010ations'),
-    ('break-word', "A splitted word.  An hyphenated word.",
-     lambda a: a > 8, "Asplittedword.Anhy\u2010phen\u2010atedword."),
+    ('break-word', 'A splitted word.  An hyphenated word.',
+     lambda a: a > 8, 'Asplittedword.Anhy\u2010phen\u2010atedword.'),
 ])
 def test_overflow_wrap(wrap, text, test, full_text):
     page, = render_pages('''
@@ -1278,24 +1338,68 @@ def test_text_transform():
 
 @assert_no_logs
 @pytest.mark.parametrize(
-    ('original', 'transformed'), [
-        ('abc def ghi', 'Abc Def Ghi'),
-        ('AbC def ghi', 'AbC Def Ghi'),
-        ('I’m SO cool', 'I’m SO Cool'),
-        ('Wow.wow!wow', 'Wow.wow!wow'),
-        ('!now not tomorrow', '!Now Not Tomorrow'),
-        ('SUPER cool', 'SUPER Cool'),
-        ('i 😻 non‑breaking characters', 'I 😻 Non‑breaking Characters'),
-        ('3lite 3lite', '3lite 3lite'),
-        ('one/two/three', 'One/two/three'),
-        ('supernatural,super', 'Supernatural,super'),
-        ('éternel αιώνια', 'Éternel Αιώνια'),
+    ('lang', 'lowercase', 'uppercase'), [
+        ('az', 'ı i', 'I İ'),
+        ('tr', 'ı i', 'I İ'),
+        ('el', 'καλημέρα αύριο θεϊκό ευφυΐα Νεράιδα',
+         'ΚΑΛΗΜΕΡΑ ΑΥΡΙΟ ΘΕΪΚΟ ΕΥΦΥΪΑ ΝΕΡΑΪΔΑ'),
+])
+def test_text_transform_lang_uppercase(lang, lowercase, uppercase):
+    page, = render_pages(f'''
+      <html lang="{lang}">
+        <p style="text-transform: uppercase">{lowercase}
+    ''')
+    html, = page.children
+    body, = html.children
+    p, = body.children
+    line, = p.children
+    text, = line.children
+    assert text.text == uppercase
+
+
+@assert_no_logs
+@pytest.mark.parametrize(
+    ('lang', 'uppercase', 'lowercase'), [
+        ('az', 'İ I', 'i ı'),
+        ('tr', 'İ I', 'i ı'),
+        ('lt', 'Ì Í Ĩ', 'i̇̀ i̇́ i̇̃'),
+])
+def test_text_transform_lang_lowercase(lang, uppercase, lowercase):
+    page, = render_pages(f'''
+      <html lang="{lang}">
+        <p style="text-transform: lowercase">{uppercase}
+    ''')
+    html, = page.children
+    body, = html.children
+    p, = body.children
+    line, = p.children
+    text, = line.children
+    assert text.text == lowercase
+
+
+@assert_no_logs
+@pytest.mark.parametrize(
+    ('original', 'transformed', 'lang_code'), [
+        ('abc def ghi', 'Abc Def Ghi', None),
+        ('AbC def ghi', 'AbC Def Ghi', None),
+        ('I’m SO cool', 'I’m SO Cool', None),
+        ('Wow.wow!wow', 'Wow.wow!wow', None),
+        ('!now not tomorrow', '!Now Not Tomorrow', None),
+        ('SUPER cool', 'SUPER Cool', None),
+        ('i 😻 non‑breaking characters', 'I 😻 Non‑breaking Characters', None),
+        ('3lite 3lite', '3lite 3lite', None),
+        ('one/two/three', 'One/two/three', None),
+        ('supernatural,super', 'Supernatural,super', None),
+        ('éternel αιώνια', 'Éternel Αιώνια', None),
+        ('great ijland', 'Great Ijland', 'fr'),
+        ('great ijland', 'Great IJland', 'nl'),
+        ('great ijland', 'Great İjland', 'az'),
     ]
 )
-def test_text_transform_capitalize(original, transformed):
+def test_text_transform_capitalize(original, transformed, lang_code):
     # Results are different for different browsers, we almost get the same
     # results as Firefox, that’s good enough!
-    assert capitalize(original) == transformed
+    assert capitalize(original, lang_code) == transformed
 
 
 @assert_no_logs

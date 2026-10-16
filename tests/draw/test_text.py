@@ -2,6 +2,8 @@
 
 import pytest
 
+from weasyprint.text.ffi import pango
+
 from ..testing_utils import SANS_FONTS
 
 
@@ -603,7 +605,7 @@ def test_text_underline(assert_pixels):
           color: rgba(255, 0, 0, 0.5);
           font-family: weasyprint;
           font-size: 3px;
-          text-decoration: underline blue;
+          text-decoration: underline blue auto;
         }
       </style>
       <div>abc</div>''')
@@ -665,6 +667,34 @@ def test_text_underline_offset_percentage(assert_pixels):
       <div>abc</div>''')
 
 
+def test_text_underline_offset_calc(assert_pixels):
+    assert_pixels('''
+        _____________
+        _zzzzzzzzzzz_
+        _zRRRRRRRRRz_
+        _zRRRRRRRRRz_
+        _zzzzzzzzzzz_
+        _zzzzzzzzzzz_
+        _zBBBBBBBBBz_
+        _zzzzzzzzzzz_
+        _____________
+    ''', '''
+      <style>
+        @page {
+          size: 13px 9px;
+          margin: 2px;
+        }
+        body {
+          color: red;
+          font-family: weasyprint;
+          font-size: 3px;
+          text-decoration: underline blue;
+          text-underline-offset: calc(0.5em + 20%);
+        }
+      </style>
+      <div>abc</div>''')
+
+
 def test_text_underline_thickness(assert_pixels):
     assert_pixels('''
         _____________
@@ -719,6 +749,64 @@ def test_text_underline_thickness_percentage(assert_pixels):
         }
       </style>
       <div>abc</div>''')
+
+
+def test_text_underline_thickness_calc(assert_pixels):
+    assert_pixels('''
+        _____________
+        _zzzzzzzzzzz_
+        _zRRRRRRRRRz_
+        _zRRRRRRRRRz_
+        _zzzzzzzzzzz_
+        _zzzzzzzzzzz_
+        _zBBBBBBBBBz_
+        _zBBBBBBBBBz_
+        _zzzzzzzzzzz_
+    ''', '''
+      <style>
+        @page {
+          size: 13px 9px;
+          margin: 2px;
+        }
+        body {
+          color: red;
+          font-family: weasyprint;
+          font-size: 3px;
+          text-decoration: underline blue calc(0.5em + 50%);
+          text-underline-offset: 2px;
+        }
+      </style>
+      <div>abc</div>''')
+
+
+def test_text_underline_thickness_calc_inherit(assert_pixels):
+    # Regression test for #2833.
+    assert_pixels('''
+        _____________
+        _zzzzzzzzzzz_
+        _zRRRRRRRRRz_
+        _zRRRRRRRRRz_
+        _zzzzzzzzzzz_
+        _zzzzzzzzzzz_
+        _zBBBBBBBBBz_
+        _zBBBBBBBBBz_
+        _zzzzzzzzzzz_
+    ''', '''
+      <style>
+        @page {
+          size: 13px 9px;
+          margin: 2px;
+        }
+        body {
+          color: red;
+          font-family: weasyprint;
+          font-size: 3px;
+          text-decoration: underline blue max(1rem, 1px);
+          text-underline-offset: 2px;
+        }
+        div::after { content: "abc" }
+      </style>
+      <div></div>''')
 
 
 def test_text_overline(assert_pixels):
@@ -1165,7 +1253,7 @@ def test_font_variant_caps_petite(assert_pixels):
 
 
 # Bug in Pango: https://gitlab.gnome.org/GNOME/pango/-/merge_requests/875
-@pytest.mark.xfail
+@pytest.mark.xfail(pango.pango_version() == 15604, reason='Bug in Pango 1.56.4')
 def test_font_variant_caps_all_petite(assert_pixels):
     assert_pixels('''
         ________
@@ -1252,9 +1340,35 @@ def test_unicode_range(assert_pixels):
         }
         body {
           color: red;
-          font-family: uni;
+          font-family: uni, %s;
           font-size: 2px;
           line-height: 0;
           margin: 2px 1px;
         }
-      </style>ADZB''')
+      </style>ADZB''' % SANS_FONTS)
+
+
+def test_bad_font_name(assert_pixels):
+    assert_pixels('''
+        __________
+        _RRRRRR___
+        _RRRRRR___
+        __________
+    ''', '''
+      <style>
+        @font-face {
+          src: url(weasyprint.otf);
+          font-family: "w/e\\\\a\\Az\\2fy";
+        }
+        @page {
+          size: 10px 4px;
+        }
+        body {
+          color: red;
+          font-family: "w/e\\\\a\\Az\\2fy";
+          font-size: 2px;
+          line-height: 0;
+          margin: 2px 1px;
+        }
+      </style>
+      abc''')

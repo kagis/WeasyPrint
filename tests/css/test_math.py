@@ -13,6 +13,8 @@ from ..testing_utils import assert_no_logs, capture_logs, render_pages
 @pytest.mark.parametrize('width', [
     'calc(100px)',
     'calc(10em)',
+    'calc(50vw)',
+    'calc(20pvh)',
     'calc(50%)',
     'calc(10px + 90px)',
     'calc(5em + 50px)',
@@ -73,13 +75,48 @@ from ..testing_utils import assert_no_logs, capture_logs, render_pages
 ])
 def test_math_functions(width):
     page, = render_pages('''
-      <style>body { font-size: 10px; width: 200px }</style>
+      <style>
+        @page { size: 400px 500px; margin: 100px }
+        body { font-size: 10px; width: 200px }
+      </style>
       <div style="--one: 1; height: 1px; width: %s"></div>
     ''' % width)
     html, = page.children
     body, = html.children
     div, = body.children
     assert isclose(div.width, 100)
+
+
+@assert_no_logs
+@pytest.mark.parametrize(('width', 'reference'), [
+    # A positive numerator over zero is +infinity, ...
+    ('calc(100px / 0)', 'calc(infinity * 1px)'),
+    ('calc(50px / 0)', 'calc(infinity * 1px)'),
+    ('calc(10em / 0)', 'calc(infinity * 1px)'),
+    # ... a negative numerator is -infinity, ...
+    ('calc(-100px / 0)', 'calc(-infinity * 1px)'),
+    # ... and zero over zero is NaN.
+    ('calc(0px / 0)', 'calc(nan * 1px)'),
+    # The divisor may evaluate to zero rather than being a literal zero.
+    ('calc(100px / (1 - 1))', 'calc(infinity * 1px)'),
+    # The resulting infinity keeps propagating through later operations.
+    ('calc(100px / 0 + 100px)', 'calc(infinity * 1px)'),
+    ('calc(-1px / 0 * 100)', 'calc(-infinity * 1px)'),
+])
+def test_calc_division_by_zero(width, reference):
+    # A division by zero inside calc() resolves to +/-infinity or NaN
+    # (IEEE-754), as required by CSS Values and Units 4, instead of raising a
+    # ZeroDivisionError. The result must match the equivalent calc(infinity *
+    # ...) / calc(nan * ...) expression that WeasyPrint already supports.
+    def render(value):
+        page, = render_pages(
+            '<div style="font-size: 10px; height: 1px; width: %s"></div>'
+            % value)
+        html, = page.children
+        body, = html.children
+        div, = body.children
+        return div.width
+    assert render(width) == render(reference)
 
 
 @assert_no_logs
@@ -94,6 +131,7 @@ def test_math_functions(width):
     'calc(100px, 100px)',
     'calc(100px * 100px)',
     'calc(100 * 100)',
+    'calc(calc(100unknown))',
     'calc(0.1)',
     'calc(-1)',
     'min()',
@@ -106,6 +144,7 @@ def test_math_functions(width):
     'max("10px")',
     'max(10, 50px)',
     'calc(max(100, 5px) * 10px)',
+    'calc(100* - max(56px, 1rem)',
     'clamp()',
     'clamp(10px)',
     'clamp(10px, 50px)',
@@ -237,6 +276,49 @@ def test_math_functions_percentage_and_font_unit(css_property):
 
 
 @assert_no_logs
+@pytest.mark.parametrize('line_height', [
+    'calc(50% + 1em)',
+    'calc(100% + 2px)',
+    'calc(1.2em + 2px)',
+    'calc(1.5 * 1)',
+])
+def test_math_functions_line_height(line_height):
+    # Regression test for #2812.
+    render_pages(f'<p style="line-height: {line_height}">Hello</p>')
+
+
+@pytest.mark.parametrize('display', [
+    'block', 'inline', 'flex', 'grid',
+    'list', 'list-item',
+    'table', 'table-row-group', 'table-cell',
+    'inline-block', 'inline-table', 'inline-flex', 'inline-grid',
+])
+def test_math_functions_display_size(display):
+    # Regression test for #2673.
+    render_pages(f'''
+    <div style="display: {display};
+     min-width: calc(50% + 1em); max-width: calc(50% + 1em); width: calc(50% + 1em);
+     min-height: calc(50% + 1em); max-height: calc(50% + 1em); height: calc(50% + 1em)
+    ">
+      <div style="
+       min-width: calc(50% + 1em); max-width: calc(50% + 1em); width: calc(50% + 1em);
+       min-height: calc(50% + 1em); max-height: calc(50% + 1em); height: calc(50% + 1em)
+      "></div>
+    </div>
+    ''')
+
+
+@assert_no_logs
+def test_math_functions_hyphenate():
+    render_pages('''
+      <div lang="en"
+        style="hyphens: auto; hyphenate-limit-zone: calc(1em + 100%); width: 2em">
+        absolute
+      </div>
+    ''')
+
+
+@assert_no_logs
 def test_math_functions_gradient():
     render_pages('''
       <div style="width: 10px; height: 10px; background: linear-gradient(
@@ -261,4 +343,120 @@ def test_math_functions_gradient_color():
       <div style="width: 10px; height: 10px; background: linear-gradient(
         rgba(10, 20, calc(30), calc(80%)) 10%,
         hsl(calc(10 + 10), 20%, 20%) 80%"></div>
+    ''')
+
+
+@assert_no_logs
+def test_math_image_min_content_calc():
+    render_pages('''
+      <table>
+        <td>
+          <img src="pattern.png" style="
+            height: calc(10% + 1em);
+            width: calc(10% + 1em);
+            max-height: calc(10% + 1em);
+            max-width: calc(10% + 1em);
+            min-height: calc(10% + 1em);
+            min-width: calc(10% + 1em);
+          ">
+    ''')
+
+
+@assert_no_logs
+def test_math_image_min_content_auto_width_calc():
+    render_pages('''
+      <table>
+        <td>
+          <img src="pattern.png" style="
+            height: calc(10% + 1em);
+            max-height: calc(10% + 1em);
+            max-width: calc(10% + 1em);
+            min-height: calc(10% + 1em);
+            min-width: calc(10% + 1em);
+          ">
+    ''')
+
+
+@assert_no_logs
+def test_math_image_min_content_auto_width_height_calc():
+    render_pages('''
+      <table>
+        <td>
+          <img src="pattern.png" style="
+            max-height: calc(10% + 1em);
+            max-width: calc(10% + 1em);
+            min-height: calc(10% + 1em);
+            min-width: calc(10% + 1em);
+          ">
+    ''')
+
+
+@assert_no_logs
+def test_math_table_margin():
+    render_pages('<table style="margin: calc(1em + 10%)">')
+
+
+@assert_no_logs
+def test_math_grid_padding():
+    render_pages('''
+      <article style="display: grid">
+        <div style="box-sizing: border-box; border: 1px solid;
+                    padding: calc(2px + 10%); width: 7px">a</div>
+      </article>
+    ''')
+
+
+@assert_no_logs
+def test_math_table_column():
+    render_pages('''
+      <table style="width: 200px">
+        <colgroup style="width: calc(1em + 10%)">
+          <col />
+        </colgroup>
+        <col style="width: calc(1em + 10%)" />
+        <tbody>
+          <tr>
+            <td>a</td>
+            <td>a</td>
+          </tr>
+        </tbody>
+      </table>
+    ''')
+
+
+@assert_no_logs
+def test_math_border_spacing_em():
+    render_pages('''
+      <table style="
+          --spacing: 1em; --border-spacing: calc(var(--spacing) * 5);
+          border-spacing: var(--border-spacing) var(--border-spacing)">
+        <tbody>
+          <tr>
+            <td>a</td>
+            <td>a</td>
+          </tr>
+        </tbody>
+      </table>
+    ''')
+
+
+@assert_no_logs
+def test_math_vertical_align_table_percent():
+    render_pages('''
+      <table><tr><td style="vertical-align: calc(1em + 1%)">abc
+    ''')
+
+
+@assert_no_logs
+def test_math_vertical_align_inline_percent():
+    render_pages('''
+      <span style="vertical-align: calc(1em + 1%)">abc
+    ''')
+
+
+@assert_no_logs
+def test_math_vertical_align_page_percent():
+    render_pages('''
+      <style>@page{@top-left{content: "a"; vertical-align: calc(1em + 1%)}}</style>
+      <body>abc
     ''')

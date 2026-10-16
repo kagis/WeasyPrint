@@ -1,6 +1,6 @@
 /*
 
-User agent stylsheet for HTML.
+User agent stylesheet for HTML.
 
 Contributed by Peter Moulder.
 Based on suggested styles in the HTML5 specification, CSS 2.1, and
@@ -9,13 +9,6 @@ what various web browsers use.
 https://dev.w3.org/html5/spec-LC/rendering.html#the-css-user-agent-style-sheet-and-presentational-hints
 
 */
-
-/* WeasyPrint-only features */
-
-[id] { -weasy-anchor: attr(id) }
-a[name] { -weasy-anchor: attr(name) }
-[lang] { -weasy-lang: attr(lang) }
-a[href] { -weasy-link: attr(href) }
 
 /* Display and visibility */
 
@@ -82,6 +75,7 @@ sup { vertical-align: super }
 
 /* Fonts and colors */
 
+html { color-scheme: light }
 address, cite, dfn, em, i, var { font-style: italic }
 b, strong, th { font-weight: bold }
 code, kbd, listing, plaintext, pre, samp, tt, xmp { font-family: monospace }
@@ -123,7 +117,7 @@ dir, menu, ul { list-style-type: disc }
 :is(dir, menu, ol, ul) ul { list-style-type: circle }
 :is(dir, menu, ol, ul) :is(dir, menu, ol, ul) ul { list-style-type: square }
 
-::marker { font-variant-numeric: tabular-nums }
+::marker { font-variant-numeric: tabular-nums; white-space: pre; text-transform: none }
 
 [dir=ltr i] { direction: ltr }
 [dir=rtl i] { direction: rtl }
@@ -140,10 +134,13 @@ img, svg { overflow: hidden }
 video { object-fit: contain }
 table { box-sizing: border-box }
 
-/* Footnotes */
+/* Notes */
 
 ::footnote-call { content: counter(footnote); vertical-align: super; font-size: smaller; line-height: inherit }
 ::footnote-marker { content: counter(footnote) ". " }
+::note-call { content: counter(note); vertical-align: super; font-size: smaller; line-height: inherit }
+::note-marker { content: counter(note) ". " }
+::note-callback { content: " ↩" }
 
 /* Counters and bookmarks */
 
@@ -187,23 +184,24 @@ fieldset { border: groove 2px; margin-left: 2px; margin-right: 2px; padding: .35
 
 @page {
   margin: 75px;
-  @footnote { margin-top: 1em }
-  @top-left-corner     { text-align: right;  vertical-align:  middle }
-  @top-left            { text-align: left;   vertical-align:  middle }
-  @top-center          { text-align: center; vertical-align:  middle }
-  @top-right           { text-align: right;  vertical-align:  middle }
-  @top-right-corner    { text-align: left;   vertical-align:  middle }
-  @left-top            { text-align: center; vertical-align:  top    }
-  @left-middle         { text-align: center; vertical-align:  middle }
-  @left-bottom         { text-align: center; vertical-align:  bottom }
-  @right-top           { text-align: center; vertical-align:  top    }
-  @right-middle        { text-align: center; vertical-align:  middle }
-  @right-bottom        { text-align: center; vertical-align:  bottom }
-  @bottom-left-corner  { text-align: right;  vertical-align:  middle }
-  @bottom-left         { text-align: left;   vertical-align:  middle }
-  @bottom-center       { text-align: center; vertical-align:  middle }
-  @bottom-right        { text-align: right;  vertical-align:  middle }
-  @bottom-right-corner { text-align: left;   vertical-align:  middle }
+  @footnote            { margin-top: 1em }
+  @note-area           { content: element(note, all-once) }
+  @top-left-corner     { text-align: right;  vertical-align: middle }
+  @top-left            { text-align: left;   vertical-align: middle }
+  @top-center          { text-align: center; vertical-align: middle }
+  @top-right           { text-align: right;  vertical-align: middle }
+  @top-right-corner    { text-align: left;   vertical-align: middle }
+  @left-top            { text-align: center; vertical-align: top    }
+  @left-middle         { text-align: center; vertical-align: middle }
+  @left-bottom         { text-align: center; vertical-align: bottom }
+  @right-top           { text-align: center; vertical-align: top    }
+  @right-middle        { text-align: center; vertical-align: middle }
+  @right-bottom        { text-align: center; vertical-align: bottom }
+  @bottom-left-corner  { text-align: right;  vertical-align: middle }
+  @bottom-left         { text-align: left;   vertical-align: middle }
+  @bottom-center       { text-align: center; vertical-align: middle }
+  @bottom-right        { text-align: right;  vertical-align: middle }
+  @bottom-right-corner { text-align: left;   vertical-align: middle }
 }
 
 /* Counters */

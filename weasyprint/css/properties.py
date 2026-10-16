@@ -3,7 +3,7 @@
 import collections
 from math import inf
 
-from tinycss2.color4 import parse_color
+from tinycss2.color5 import parse_color
 
 Dimension = collections.namedtuple('Dimension', ['value', 'unit'])
 
@@ -77,6 +77,7 @@ INITIAL_VALUES = {
         Dimension(0, None), Dimension(0, None),
         Dimension(0, None), Dimension(0, None)),
     'border_image_repeat': ('stretch', 'stretch'),
+    'box_shadow': (),
     'mask_border_source': ('none', None),
     'mask_border_slice': (
         Dimension(100, '%'), Dimension(100, '%'),
@@ -89,6 +90,8 @@ INITIAL_VALUES = {
     'mask_border_repeat': ('stretch', 'stretch'),
     'mask_border_mode': 'alpha',
 
+    # Color Adjustment 1 (CRD): https://www.w3.org/TR/css-color-adjust-1
+    'color_scheme': 'normal',
 
     # Color 3 (REC): https://www.w3.org/TR/css-color-3/
     'opacity': 1,
@@ -193,6 +196,42 @@ INITIAL_VALUES = {
     'min_width': 'auto',
     'width': 'auto',
 
+    # Logical Properties and Values 1 (WD): https://www.w3.org/TR/css-logical-1/
+    'block_size': 'auto',
+    'inline_size': 'auto',
+    'max_block_size': Dimension(inf, 'px'),  # parsed value for 'none',
+    'max_inline_size': Dimension(inf, 'px'),
+    'min_block_size': 'auto',
+    'min_inline_size': 'auto',
+    'margin_block_start': 0,
+    'margin_inline_start': 0,
+    'margin_block_end': 0,
+    'margin_inline_end': 0,
+    'padding_block_start': 0,
+    'padding_inline_start': 0,
+    'padding_block_end': 0,
+    'padding_inline_end': 0,
+    'inset_block_start': 'auto',
+    'inset_inline_start': 'auto',
+    'inset_block_end': 'auto',
+    'inset_inline_end': 'auto',
+    'border_block_start_width': 3,
+    'border_inline_start_width': 3,
+    'border_block_end_width': 3,
+    'border_inline_end_width': 3,
+    'border_block_start_style': 'none',
+    'border_inline_start_style': 'none',
+    'border_block_end_style': 'none',
+    'border_inline_end_style': 'none',
+    'border_block_start_color': 'currentcolor',
+    'border_inline_start_color': 'currentcolor',
+    'border_block_end_color': 'currentcolor',
+    'border_inline_end_color': 'currentcolor',
+    'border_start_start_radius': 0,
+    'border_start_end_radius': 0,
+    'border_end_start_radius': 0,
+    'border_end_end_radius': 0,
+
     # Flexible Box Layout Module 1 (CR): https://www.w3.org/TR/css-flexbox-1/
     'flex_basis': 'auto',
     'flex_direction': 'row',
@@ -251,7 +290,6 @@ INITIAL_VALUES = {
 
     # Proprietary
     'anchor': None,  # computed value of 'none'
-    'link': None,  # computed value of 'none'
     'lang': None,  # computed value of 'none'
 }
 
@@ -273,6 +311,7 @@ INHERITED = {
     'border_spacing',
     'caption_side',
     'color',
+    'color_scheme',
     'direction',
     'empty_cells',
     'font_family',
@@ -300,7 +339,6 @@ INHERITED = {
     'lang',
     'letter_spacing',
     'line_height',
-    'link',
     'list_style_image',
     'list_style_position',
     'list_style_type',
@@ -338,6 +376,10 @@ TABLE_WRAPPER_BOX_PROPERTIES = {
     'margin_bottom',
     'margin_left',
     'margin_right',
+    'margin_block_start',
+    'margin_block_end',
+    'margin_inline_start',
+    'margin_inline_end',
     'opacity',
     'overflow',
     'position',
@@ -360,15 +402,13 @@ INITIAL_NOT_COMPUTED = {
     'bleed_bottom',
     'bleed_right',
     'outline_width',
-    'outline_color',
     'column_rule_width',
-    'column_rule_color',
     'border_top_width',
     'border_left_width',
     'border_bottom_width',
     'border_right_width',
-    'border_top_color',
-    'border_left_color',
-    'border_bottom_color',
-    'border_right_color',
+    'border_block_start_width',
+    'border_inline_start_width',
+    'border_block_end_width',
+    'border_inline_end_width',
 }

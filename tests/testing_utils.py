@@ -1,6 +1,8 @@
 """Helpers for tests."""
 
+import contextlib
 import functools
+import logging
 import sys
 from pathlib import Path
 
@@ -9,8 +11,7 @@ from weasyprint.css import get_all_computed_styles
 from weasyprint.css.counters import CounterStyle
 from weasyprint.css.targets import TargetCollector
 from weasyprint.formatting_structure import boxes, build
-from weasyprint.html import HTML5_UA_STYLESHEET
-from weasyprint.logger import capture_logs
+from weasyprint.html import UA_STYLESHEET
 from weasyprint.text.fonts import FontConfiguration
 from weasyprint.urls import path2url
 
@@ -47,7 +48,7 @@ class FakeHTML(HTML):
 
     def _ua_stylesheets(self, forms=False):
         return [
-            TEST_UA_STYLESHEET if stylesheet == HTML5_UA_STYLESHEET
+            TEST_UA_STYLESHEET if stylesheet == UA_STYLESHEET
             else stylesheet for stylesheet in super()._ua_stylesheets(forms)]
 
     def render(self, font_config=None, *args, **kwargs):
@@ -71,6 +72,38 @@ BASE_URL = path2url(resource_path('<test>'))
 TEST_UA_FONT_CONFIG = FontConfiguration()
 TEST_UA_STYLESHEET = CSS(resource_path('tests_ua.css'), font_config=TEST_UA_FONT_CONFIG)
 
+class CallbackHandler(logging.Handler):
+    """A logging handler that calls a function for every message."""
+    def __init__(self, callback):
+        logging.Handler.__init__(self)
+        self.emit = callback
+
+
+@contextlib.contextmanager
+def capture_logs(logger='weasyprint', level=None):
+    """Return a context manager that captures all logged messages."""
+    if level is None:
+        level = logging.INFO
+    logger = logging.getLogger(logger)
+    messages = []
+
+    def emit(record):
+        if record.name == 'weasyprint.progress':
+            return
+        if record.levelno < level:
+            return
+        messages.append(f'{record.levelname.upper()}: {record.getMessage()}')
+
+    previous_handlers = logger.handlers
+    previous_level = logger.level
+    logger.handlers = []
+    logger.addHandler(CallbackHandler(emit))
+    logger.setLevel(logging.DEBUG)
+    try:
+        yield messages
+    finally:
+        logger.handlers = previous_handlers
+        logger.setLevel(previous_level)
 
 def assert_no_logs(function):
     """Decorator that asserts that nothing is logged in a function."""

@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from math import e, inf, nan, pi
 
 from tinycss2.ast import DimensionToken, IdentToken, NumberToken, PercentageToken
-from tinycss2.color4 import parse_color
+from tinycss2.color5 import parse_color
 
 from ..logger import LOGGER
 from ..urls import get_url_tuple
@@ -57,8 +57,8 @@ class PercentageInMath(ValueError):  # noqa: N818
     """Percentage in math function without reference length."""
 
 
-class FontUnitInMath(ValueError):  # noqa: N818
-    """Font-relative unit in math function without reference style."""
+class RelativeLengthInMath(ValueError):  # noqa: N818
+    """Relative length unit in math function without reference style."""
 
 
 class Pending(ABC):
@@ -70,18 +70,18 @@ class Pending(ABC):
         self._reported_error = False
 
     @abstractmethod
-    def validate(self, tokens, wanted_key):
+    def validate(self, tokens, wanted_key, base_url):
         """Get validated value for wanted key."""
         raise NotImplementedError
 
-    def solve(self, tokens, wanted_key):
+    def solve(self, tokens, wanted_key, base_url):
         """Get validated value or raise error."""
         try:
             if not tokens:
                 # Having no tokens is allowed by grammar but refused by all
                 # properties and expanders.
                 raise InvalidValues('no value')
-            return self.validate(tokens, wanted_key)
+            return self.validate(tokens, wanted_key, base_url)
         except InvalidValues as exception:
             if self._reported_error:
                 raise exception
@@ -341,7 +341,7 @@ def get_number(token, negative=True, integer=False):
     if check_math(token):
         try:
             resolved = resolve_math(token)
-        except (PercentageInMath, FontUnitInMath):
+        except (PercentageInMath, RelativeLengthInMath):
             return
         else:
             if resolved is None:
@@ -387,11 +387,11 @@ def get_percentage(token, negative=True):
     if check_math(token):
         try:
             token = resolve_math(token) or token
-        except (PercentageInMath, FontUnitInMath):
+        except (PercentageInMath, RelativeLengthInMath):
             return
         else:
-            # Range clamp.
-            if not negative:
+            # Range clamp percentages.
+            if token.type == 'percentage' and not negative:
                 token.value = max(0, token.value)
     if token.type == 'percentage' and (negative or token.value >= 0):
         return Dimension(token.value, '%')
@@ -408,7 +408,7 @@ def get_length(token, negative=True, percentage=False):
             # PercentageInMath is raised in priority to help discarding percentages for
             # properties that don’t allow them.
             return token if percentage else None
-        except FontUnitInMath:
+        except RelativeLengthInMath:
             return token
         else:
             # Range clamp.
@@ -430,21 +430,24 @@ def get_angle(token):
 
     try:
         token = resolve_math(token) or token
-    except (PercentageInMath, FontUnitInMath):
+    except (PercentageInMath, RelativeLengthInMath):
         return
-    if token.type == 'dimension':
+    if token.type == 'number' and token.value == 0:
+        # Legacy syntax: https://drafts.csswg.org/css-values-4/#angles.
+        return 0
+    elif token.type == 'dimension':
         factor = ANGLE_TO_RADIANS.get(token.unit.lower())
         if factor is not None:
             return token.value * factor
 
 
 def get_resolution(token):
-    """Parse a <resolution> token in ddpx."""
+    """Parse a <resolution> token in dppx."""
     from . import resolve_math
 
     try:
         token = resolve_math(token) or token
-    except (PercentageInMath, FontUnitInMath):
+    except (PercentageInMath, RelativeLengthInMath):
         return
     if token.type == 'dimension':
         factor = RESOLUTION_TO_DPPX.get(token.unit.lower())

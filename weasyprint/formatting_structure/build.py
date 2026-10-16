@@ -4,9 +4,6 @@ This includes creating anonymous boxes and processing whitespace as necessary.
 
 """
 
-import re
-import unicodedata
-
 from .. import html
 from ..css import properties, targets
 from ..layout.table import collapse_table_borders
@@ -40,14 +37,6 @@ BOX_TYPE_FROM_DISPLAY = {
     ('table-cell',): boxes.TableCellBox,
     ('table-caption',): boxes.TableCaptionBox,
 }
-
-# https://stackoverflow.com/questions/16317534/
-ASCII_TO_WIDE = {i: chr(i + 0xfee0) for i in range(0x21, 0x7f)}
-ASCII_TO_WIDE.update({0x20: '\u3000', 0x2D: '\u2212'})
-
-LINE_FEED_RE = re.compile('\r\n?')
-TAB_RE = re.compile('[\t ]*\n[\t ]*')
-SPACE_RE = re.compile('[\t ]+')
 
 
 def create_anonymous_boxes(box):
@@ -84,6 +73,8 @@ def build_formatting_structure(element_tree, style_for, get_image_from_uri,
             target_collector, counter_style, footnotes)
 
     target_collector.check_pending_targets()
+    box.process_whitespace()
+    box.process_text_transform()
 
     box.is_for_root_element = True
     # If this is changed, maybe update weasy.layout.page.make_margin_boxes()
@@ -150,11 +141,12 @@ def element_to_box(element, style_for, get_image_from_uri, base_url,
         state = (
             # Shared mutable objects:
             [0],  # quote_depth: single integer
-            # TODO: define the footnote counter where it can be updated by page
-            {'footnote': [0]},  # counter_values: name -> stacked/scoped values
-            [{'footnote'}]  # counter_scopes: element depths -> counter names
+            # TODO: define the note counters where it can be updated by page.
+            {'footnote': [0], 'note': [0]},  # counter_values: name -> stacked values
+            [{'footnote', 'note'}],  # counter_scopes: element depths -> counter names
+            [], # page_groups
         )
-    quote_depth, counter_values, counter_scopes = state
+    quote_depth, counter_values, counter_scopes, _page_groups = state
 
     update_counters(state, style)
 
@@ -192,6 +184,7 @@ def element_to_box(element, style_for, get_image_from_uri, base_url,
 
         if child_boxes and child_boxes[0].style['float'] == 'footnote':
             footnote = child_boxes[0]
+            footnote.style = footnote.style.copy()
             footnote.style['float'] = 'none'
             footnotes.append(footnote)
             call_style = style_for(footnote.element, 'footnote-call')
@@ -203,6 +196,17 @@ def element_to_box(element, style_for, get_image_from_uri, base_url,
                 get_image_from_uri, target_collector, counter_style)
             footnote_call.footnote = footnote
             child_boxes = [footnote_call]
+        if child_boxes and child_boxes[0].is_note():
+            note = child_boxes[0]
+            note.style = note.style.copy()
+            call_style = style_for(note.element, 'note-call')
+            note_call = make_box(
+                f'{note.element.tag}::note-call', call_style, [], note.element)
+            note_call.children = content_to_boxes(
+                call_style, note_call, quote_depth, counter_values,
+                get_image_from_uri, target_collector, counter_style)
+            note.note_call, note_call.note = note_call, note
+            child_boxes = [note_call, note]
 
         children.extend(child_boxes)
         text = child_element.tail
@@ -224,10 +228,8 @@ def element_to_box(element, style_for, get_image_from_uri, base_url,
             counter_values.pop(name)
 
     box.children = children
-    process_whitespace(box)
     set_content_lists(
         element, box, style, counter_values, target_collector, counter_style)
-    process_text_transform(box)
 
     if marker_boxes and len(box.children) == 1:
         # See https://www.w3.org/TR/css-lists-3/#list-style-position-outside
@@ -253,6 +255,22 @@ def element_to_box(element, style_for, get_image_from_uri, base_url,
             marker_style, marker, quote_depth, counter_values, get_image_from_uri,
             target_collector, counter_style)
         box.children.insert(0, marker)
+    elif style['position'][0] == 'note()':
+        counter_values['note'][-1] += 1
+        marker_style = style_for(element, 'note-marker')
+        marker = make_box(f'{element.tag}::note-marker', marker_style, [], element)
+        marker.children = content_to_boxes(
+            marker_style, marker, quote_depth, counter_values, get_image_from_uri,
+            target_collector, counter_style)
+        box.children.insert(0, marker)
+        callback_style = style_for(element, 'note-callback')
+        callback = make_box(
+            f'{element.tag}::note-callback', callback_style, [], element)
+        callback.children = content_to_boxes(
+            callback_style, callback, quote_depth, counter_values, get_image_from_uri,
+            target_collector, counter_style)
+        box.children.append(callback)
+        box.note_callback = callback
 
     # Specific handling for the element. (eg. replaced element)
     return html.handle_element(element, box, get_image_from_uri, base_url)
@@ -278,7 +296,7 @@ def before_after_to_box(element, pseudo_type, state, style_for,
         return []
     box = make_box(f'{element.tag}::{pseudo_type}', style, [], element)
 
-    quote_depth, counter_values, _counter_scopes = state
+    quote_depth, counter_values, _counter_scopes, _page_groups = state
     update_counters(state, style)
 
     children = []
@@ -297,7 +315,7 @@ def before_after_to_box(element, pseudo_type, state, style_for,
 
     # calculate the bookmark-label
     if style['bookmark_level'] != 'none':
-        _quote_depth, counter_values, _counter_scopes = state
+        _quote_depth, counter_values, _counter_scopes, _page_groups = state
         compute_bookmark_label(
             element, box, style['bookmark_label'], counter_values,
             target_collector, counter_style)
@@ -312,13 +330,15 @@ def marker_to_box(element, state, parent_style, style_for, get_image_from_uri,
 
     """
     style = style_for(element, 'marker')
+    if style is None:
+        style = parent_style.anonymous_style
 
     children = []
 
     # TODO: should be the computed value. When does the used value for
     # `display` differ from the computer value? It's at least wrong for
     # `content` where 'normal' computes as 'inhibit' for pseudo elements.
-    quote_depth, counter_values, _counter_scopes = state
+    quote_depth, counter_values, _counter_scopes, _page_groups = state
 
     box = make_box(f'{element.tag}::marker', style, children, element)
 
@@ -346,7 +366,6 @@ def marker_to_box(element, state, parent_style, style_for, get_image_from_uri,
             counter_type = style['list_style_type']
             if marker_text := counter_style.render_marker(counter_type, counter_value):
                 box = boxes.TextBox.anonymous_from(box, marker_text)
-                box.style['white_space'] = 'pre-wrap'
                 children.append(box)
 
     if not children:
@@ -356,6 +375,7 @@ def marker_to_box(element, state, parent_style, style_for, get_image_from_uri,
         marker_box = boxes.BlockBox.anonymous_from(box, children)
         # We can safely edit everything that can't be changed by user style
         # See https://drafts.csswg.org/css-pseudo-4/#marker-pseudo
+        marker_box.style = marker_box.style.copy()
         marker_box.style['position'] = 'absolute'
         marker_box.is_outside_marker = True
     else:
@@ -421,11 +441,16 @@ def compute_content_list(content_list, parent_box, counter_values, css_token,
             if image is not None:
                 content_boxes.append(
                     boxes.InlineReplacedBox.anonymous_from(parent_box, image))
+        elif type_ == 'attr()':
+            attr_name, attr_type, attr_fallback = value
+            if attr_type == 'string':
+                add_text(parent_box.element.get(attr_name, ''))
+            else:
+                LOGGER.warning(
+                    'Only strings are allowed for content attr() functions, not %s',
+                    attr_type)
         elif type_ == 'content()':
-            added_text = extract_text(value, parent_box)
-            # Simulate the step of white space processing
-            # (normally done during the layout).
-            add_text(added_text.strip())
+            add_text(parent_box.extract_text(value))
         elif type_ == 'string()':
             if not in_page_context:
                 # string() is currently only valid in @page context.
@@ -434,7 +459,7 @@ def compute_content_list(content_list, parent_box, counter_values, css_token,
                     '"string(%s)" is only allowed in page margins',
                     ' '.join(value))
                 continue
-            add_text(context.get_string_set_for(page, *value))
+            add_text(''.join(context.get_string_set_for(page, *value)))
         elif type_ in ('counter()', 'counters()'):
             counter_name, counter_type = value[0], value[-1]
             if counter_type == 'none':
@@ -490,10 +515,7 @@ def compute_content_list(content_list, parent_box, counter_values, css_token,
                 target_box = lookup_target.target_box
                 # TODO: 'before'- and 'after'- content referring missing
                 # counters are not properly set.
-                text = extract_text(text_style, target_box)
-                # Simulate the step of white space processing
-                # (normally done during the layout)
-                add_text(text.strip())
+                add_text(target_box.extract_text(text_style))
             else:
                 break
         elif type_ == 'quote' and None not in (quote_depth, quote_style):
@@ -516,20 +538,20 @@ def compute_content_list(content_list, parent_box, counter_values, css_token,
                     '"element(%s)" is only allowed in page margins',
                     ' '.join(value))
                 continue
-            new_box = context.get_running_element_for(page, *value)
-            if new_box is None:
-                continue
-            new_box = new_box.deepcopy()
-            new_box.style['position'] = 'static'
-            if isinstance(new_box, boxes.ParentBox):
-                for child in new_box.descendants():
-                    if child.style['content'] in ('normal', 'none'):
-                        continue
-                    child.children = content_to_boxes(
-                        child.style, child, quote_depth, counter_values,
-                        get_image_from_uri, target_collector, counter_style,
-                        context=context, page=page)
-            content_boxes.append(new_box)
+            for new_box in context.get_running_element_for(page, *value):
+                new_box = new_box.deepcopy()
+                new_box.style = new_box.style.copy()
+                new_box.style['position'] = 'relative'
+                if value[1] != 'all-once':
+                    # Use page counters instead of box counters.
+                    for child in new_box.descendants():
+                        if child.style['content'] in ('normal', 'none'):
+                            continue
+                        child.children = content_to_boxes(
+                            child.style, child, quote_depth, counter_values,
+                            get_image_from_uri, target_collector, counter_style,
+                            context=context, page=page)
+                content_boxes.append(new_box)
         elif type_ == 'leader()':
             if not value[1]:
                 continue
@@ -598,7 +620,6 @@ def compute_string_set(element, box, string_name, content_list,
     """Parse the content-list value of ``string_name`` for ``string-set``."""
     def parse_again(mixin_pagebased_counters=None):
         """Closure to parse the string-set string value all again."""
-
         # Neither alters the mixed-in nor the cached counter values, no
         # need to deepcopy here
         if mixin_pagebased_counters is None:
@@ -606,7 +627,6 @@ def compute_string_set(element, box, string_name, content_list,
         else:
             local_counters = mixin_pagebased_counters.copy()
         local_counters.update(box.cached_counter_values)
-
         compute_string_set(
             element, box, string_name, content_list, local_counters,
             target_collector, counter_style)
@@ -630,7 +650,7 @@ def compute_string_set(element, box, string_name, content_list,
 def compute_bookmark_label(element, box, content_list, counter_values,
                            target_collector, counter_style):
     """Parses the content-list value for ``bookmark-label``."""
-    def parse_again(mixin_pagebased_counters={}):
+    def parse_again(mixin_pagebased_counters=None):
         """Closure to parse the bookmark-label all again."""
         # Neither alters the mixed-in nor the cached counter values, no
         # need to deepcopy here
@@ -638,7 +658,6 @@ def compute_bookmark_label(element, box, content_list, counter_values,
             local_counters = {}
         else:
             local_counters = mixin_pagebased_counters.copy()
-        local_counters = mixin_pagebased_counters.copy()
         local_counters.update(box.cached_counter_values)
         compute_bookmark_label(
             element, box, content_list, local_counters, target_collector,
@@ -649,7 +668,7 @@ def compute_bookmark_label(element, box, content_list, counter_values,
         content_list, box, counter_values, css_token, parse_again,
         target_collector, counter_style, element=element)
     if box_list:
-        box.bookmark_label = ''.join(box_text(box) for box in box_list)
+        box.bookmark_label = ''.join(box.content_text for box in box_list)
 
 
 def set_content_lists(element, box, style, counter_values, target_collector,
@@ -662,7 +681,7 @@ def set_content_lists(element, box, style, counter_values, target_collector,
     """
     box.string_set = []
     if style['string_set'] != 'none':
-        for i, (string_name, string_values) in enumerate(style['string_set']):
+        for string_name, string_values in style['string_set']:
             compute_string_set(
                 element, box, string_name, string_values, counter_values,
                 target_collector, counter_style)
@@ -674,7 +693,7 @@ def set_content_lists(element, box, style, counter_values, target_collector,
 
 def update_counters(state, style):
     """Handle the ``counter-*`` properties."""
-    _quote_depth, counter_values, counter_scopes = state
+    _quote_depth, counter_values, counter_scopes, _page_groups = state
     sibling_scopes = counter_scopes[-1]
 
     for name, value in style['counter_reset']:
@@ -709,11 +728,6 @@ def update_counters(state, style):
             sibling_scopes.add(name)
             values.append(0)
         values[-1] += value
-
-
-def is_whitespace(box, _has_non_whitespace=re.compile('\\S').search):
-    """Return True if ``box`` is a TextBox with only whitespace."""
-    return isinstance(box, boxes.TextBox) and not _has_non_whitespace(box.text)
 
 
 def wrap_improper(box, children, wrapper_type, test=None):
@@ -788,13 +802,13 @@ def table_boxes_children(box, children):
 
         # Last child
         internal, text = children[-2:]
-        if (internal.internal_table_or_caption and is_whitespace(text)):
+        if (internal.internal_table_or_caption and text.is_whitespace()):
             children.pop()
 
         # First child
         if len(children) >= 2:
             text, internal = children[:2]
-            if (internal.internal_table_or_caption and is_whitespace(text)):
+            if (internal.internal_table_or_caption and text.is_whitespace()):
                 children.pop(0)
 
         # Children other than first and last that would be removed by
@@ -811,7 +825,7 @@ def table_boxes_children(box, children):
             # Ignore some whitespace: rule 1.4
             prev_child and prev_child.internal_table_or_caption and
             next_child and next_child.internal_table_or_caption and
-            is_whitespace(child)
+            child.is_whitespace()
         )
     ]
 
@@ -983,21 +997,31 @@ def wrap_table(box, children):
     return wrapper
 
 
-def blockify(box, layout):
+def blockify(box, layout=None):
     """Turn an inline box into a block box."""
     # See https://drafts.csswg.org/css-display-4/#blockify.
     if isinstance(box, boxes.InlineBlockBox):
         anonymous = boxes.BlockBox.anonymous_from(box, box.children)
+        if box.is_table_wrapper:
+            anonymous.is_table_wrapper = True
     elif isinstance(box, boxes.InlineReplacedBox):
         replacement = box.replacement
         anonymous = boxes.BlockReplacedBox.anonymous_from(box, replacement)
-    elif isinstance(box, boxes.InlineLevelBox):
+    elif isinstance(box, boxes.TextBox):
         anonymous = boxes.BlockBox.anonymous_from(box, [box])
-        setattr(box, f'is_{layout}_item', False)
+        if layout:
+            setattr(box, f'is_{layout}_item', False)
+    elif isinstance(box, boxes.InlineFlexBox):
+        anonymous = boxes.FlexBox.anonymous_from(box, box.children)
+    elif isinstance(box, boxes.InlineGridBox):
+        anonymous = boxes.GridBox.anonymous_from(box, box.children)
+    elif isinstance(box, boxes.InlineLevelBox):
+        anonymous = boxes.BlockBox.anonymous_from(box, box.children)
     else:
         return box
     anonymous.style = box.style
-    setattr(anonymous, f'is_{layout}_item', True)
+    if layout:
+        setattr(anonymous, f'is_{layout}_item', True)
     return anonymous
 
 
@@ -1070,94 +1094,6 @@ def grid_children(box, children):
         return children
 
 
-def process_whitespace(box, following_collapsible_space=False):
-    """First part of "The 'white-space' processing model".
-
-    See https://www.w3.org/TR/CSS21/text.html#white-space-model
-    https://drafts.csswg.org/css-text-3/#white-space-rules
-
-    """
-    if isinstance(box, boxes.TextBox):
-        text = box.text
-        if not text:
-            return following_collapsible_space
-
-        # Normalize line feeds
-        text = LINE_FEED_RE.sub('\n', text)
-
-        new_line_collapse = box.style['white_space'] in ('normal', 'nowrap')
-        space_collapse = box.style['white_space'] in (
-            'normal', 'nowrap', 'pre-line')
-
-        if space_collapse:
-            # \r characters were removed/converted earlier
-            text = TAB_RE.sub('\n', text)
-
-        if new_line_collapse:
-            # TODO: this should be language-specific
-            # Could also replace with a zero width space character (U+200B),
-            # or no character
-            # CSS3: https://www.w3.org/TR/css-text-3/#overflow-wrap
-            text = text.replace('\n', ' ')
-
-        if space_collapse:
-            previous_text = text = SPACE_RE.sub(' ', text)
-            if following_collapsible_space and text.startswith(' '):
-                text = text[1:]
-                box.leading_collapsible_space = True
-            following_collapsible_space = previous_text.endswith(' ')
-        else:
-            following_collapsible_space = False
-
-        box.text = text
-
-    else:
-        for child in box.children:
-            if isinstance(child, (boxes.TextBox, boxes.InlineBox)):
-                child_collapsible_space = process_whitespace(
-                    child, following_collapsible_space)
-                if box.is_in_normal_flow() and child.is_in_normal_flow():
-                    following_collapsible_space = child_collapsible_space
-            elif child.is_in_normal_flow():
-                following_collapsible_space = False
-
-    return following_collapsible_space and not box.is_running()
-
-
-def process_text_transform(box):
-    if isinstance(box, boxes.TextBox):
-        text_transform = box.style['text_transform']
-        if text_transform != 'none':
-            box.text = {
-                'uppercase': lambda text: text.upper(),
-                'lowercase': lambda text: text.lower(),
-                'capitalize': capitalize,
-                'full-width': lambda text: text.translate(ASCII_TO_WIDE),
-            }[text_transform](box.text)
-        if box.style['hyphens'] == 'none':
-            box.text = box.text.replace('\u00AD', '')  # U+00AD is soft hyphen
-
-    elif not box.is_running():
-        for child in box.children:
-            if isinstance(child, (boxes.TextBox, boxes.InlineBox)):
-                process_text_transform(child)
-
-
-def capitalize(text):
-    """Capitalize words according to CSS’s "text-transform: capitalize"."""
-    letter_found = False
-    output = ''
-    for letter in text:
-        category = unicodedata.category(letter)[0]
-        if not letter_found and category in ('L', 'N'):
-            letter_found = True
-            letter = letter.upper()
-        elif category == 'Z':
-            letter_found = False
-        output += letter
-    return output
-
-
 def inline_in_block(box):
     """Build the structure of lines inside blocks and return a new box tree.
 
@@ -1196,7 +1132,7 @@ def inline_in_block(box):
         ]
 
     """
-    if not box.children or box.is_running():
+    if not box.children or box.is_running() or box.is_note():
         return box
 
     box_children = list(box.children)
@@ -1331,7 +1267,7 @@ def block_in_inline(box):
         ]
 
     """
-    if not box.children or box.is_running():
+    if not box.children or box.is_running() or box.is_note():
         return box
 
     new_children = []
@@ -1445,41 +1381,3 @@ def set_viewport_overflow(root_box):
     root_box.viewport_overflow = chosen_box.style['overflow']
     chosen_box.style['overflow'] = 'visible'
     return root_box
-
-
-def box_text(box):
-    if isinstance(box, boxes.TextBox):
-        return box.text
-    elif isinstance(box, boxes.ParentBox):
-        return ''.join(
-            child.text for child in box.descendants()
-            if not child.element_tag.endswith('::before') and
-            not child.element_tag.endswith('::after') and
-            not child.element_tag.endswith('::marker') and
-            isinstance(child, boxes.TextBox))
-    return ''
-
-
-def extract_text(text_part, box):
-    if text_part in ('text', 'content'):
-        return box_text(box)
-    elif text_part in ('before', 'after'):
-        if isinstance(box, boxes.ParentBox):
-            return ''.join(
-                box_text(child) for child in box.descendants()
-                if child.element_tag.endswith(f'::{text_part}') and
-                not isinstance(child, boxes.ParentBox))
-        return ''
-    elif text_part == 'first-letter':
-        # TODO: use the same code as in inlines.first_letter_to_box
-        character_found = False
-        first_letter = ''
-        text = box_text(box)
-        for letter in text:
-            category = unicodedata.category(letter)
-            if category not in ('Ps', 'Pe', 'Pi', 'Pf', 'Po'):
-                if character_found:
-                    break
-                character_found = True
-            first_letter += letter
-        return first_letter

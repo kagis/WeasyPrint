@@ -3,7 +3,6 @@
 import io
 import re
 from hashlib import md5
-from logging import WARNING
 from math import ceil
 
 import pydyf
@@ -11,10 +10,12 @@ from fontTools import subset
 from fontTools.ttLib import TTFont, TTLibError, ttFont
 from fontTools.varLib.instancer import instantiateVariableFont
 
-from ..logger import LOGGER, capture_logs
+from ..logger import LOGGER
 from ..text.constants import PANGO_STRETCH_PERCENT
-from ..text.ffi import FROM_UNITS, ffi, harfbuzz, harfbuzz_subset, pango
 from ..text.fonts import get_hb_object_data, get_pango_font_hb_face
+
+from ..text.ffi import (  # isort:skip
+    FROM_UNITS, ffi, harfbuzz, harfbuzz_subset, harfbuzz_vector, pango)
 
 
 class Font:
@@ -60,8 +61,8 @@ class Font:
             in md5(description_string, usedforsecurity=False).digest()[:6])
 
         # Set font name.
-        name = re.split(b' [#@]', description_string)[0]
-        self.name = b'/' + self.hash.encode() + b'+' + name.replace(b' ', b'-')
+        name = re.split(' [#@]', description_string.decode())[0]
+        self.name = pydyf.name(f'{self.hash}+{name}')
 
         # Set ascent and descent.
         if self.font_size:
@@ -98,6 +99,16 @@ class Font:
         self.upem = harfbuzz.hb_face_get_upem(self.hb_face)
         self.png = harfbuzz.hb_ot_color_has_png(self.hb_face)
         self.svg = harfbuzz.hb_ot_color_has_svg(self.hb_face)
+        if harfbuzz.hb_version_atleast(7, 0, 0):
+            self.colr = (
+                harfbuzz.hb_ot_color_has_paint(self.hb_face) or
+                harfbuzz.hb_ot_color_has_layers(self.hb_face))
+            if self.colr and not harfbuzz_vector:
+                LOGGER.warning(
+                    'Please install HarfBuzz version 13+ with harfbuzz-vector '
+                    'to display %s COLR emoji fonts.', self.family)
+        else:
+            self.colr = False
         self.glyph_count = harfbuzz.hb_face_get_glyph_count(self.hb_face)
         self.stemv = 80
         self.stemh = 80
@@ -110,7 +121,7 @@ class Font:
         self.flags = 2 ** (3 - 1)  # Symbolic, custom character set
         if self.style:
             self.flags += 2 ** (7 - 1)  # Italic
-        if b'Serif' in name.split(b' '):
+        if b'Serif' in name.split(' '):
             self.flags += 2 ** (2 - 1)  # Serif
 
     def get_unused_glyph_id(self, codepoint):
@@ -119,8 +130,8 @@ class Font:
             next_unused_glyph_id = self.glyph_count + len(self.missing)
             if next_unused_glyph_id > 2 ** 16 - 1:
                 LOGGER.warning(
-                    f'Too many glyphs missing from "{self.family}", '
-                    'expect text selection problems')
+                    'Too many glyphs missing from "%s", '
+                    'expect text selection problems', self.family)
                 next_unused_glyph_id = 2 ** 16 - 1
             self.missing[codepoint] = next_unused_glyph_id
         return self.missing[codepoint]
@@ -155,13 +166,13 @@ class Font:
                 ttfont = instantiateVariableFont(ttfont, self.variations, static=True)
                 ttfont.save(partial_font)
             except Exception as exception:
-                LOGGER.warning(f'Unable to instantiate "{self.family}" variable font')
+                LOGGER.warning('Unable to instantiate "%s" variable font', self.family)
                 LOGGER.debug('Original exception:', exc_info=exception)
             else:
                 self.file_content = partial_font.getvalue()
 
         # Remove images.
-        if self.png or self.svg:
+        if self.png or self.svg or self.colr:
             full_font = io.BytesIO(self.file_content)
             ttfont = TTFont(full_font, fontNumber=self.index)
             try:
@@ -176,14 +187,14 @@ class Font:
                 else:
                     for glyph in ttfont['glyf'].glyphs:
                         ttfont['glyf'][glyph] = ttFont.getTableModule('glyf').Glyph()
-                for table_name in ('CBDT', 'CBLC', 'SVG '):
+                for table_name in ('CBDT', 'CBLC', 'SVG ', 'COLR'):
                     if table_name in ttfont:
                         del ttfont[table_name]
                 output_font = io.BytesIO()
                 ttfont.save(output_font)
                 self.file_content = output_font.getvalue()
             except TTLibError as exception:
-                LOGGER.warning(f'Unable to save emoji font "{self.family}"')
+                LOGGER.warning('Unable to save emoji font "%s"', self.family)
                 LOGGER.debug('Original exception:', exc_info=exception)
 
     @property
@@ -199,6 +210,10 @@ class Font:
             # 4.1.0 is required for hb_set_add_sorted_array.
             self._harfbuzz_subset(to_unicode, hinting)
         else:
+            LOGGER.warning(
+                'Using fontTools instead of HarfBuzz-Subset for font "%s". This will '
+                'be unsupported in future versions of WeasyPrint. Please install '
+                'HarfBuzz-Subset >= 4.1.0 with your package manager.', self.family)
             self._fonttools_subset(to_unicode, hinting)
 
     def _harfbuzz_subset(self, to_unicode, hinting):
@@ -263,7 +278,7 @@ class Font:
                 self.file_content = file_content
                 return
 
-        LOGGER.warning(f'Unable to subset "{self.family}" with HarfBuzz')
+        LOGGER.warning('Unable to subset "%s" with HarfBuzz', self.family)
 
     def _fonttools_subset(self, to_unicode, hinting):
         """Subset font using Fonttools."""
@@ -280,14 +295,9 @@ class Font:
         # Subset font.
         try:
             ttfont = TTFont(full_font, fontNumber=self.index)
-            with capture_logs('fontTools', level=WARNING) as logs:
-                subsetter.subset(ttfont)
-            for log in logs:
-                LOGGER.warning(
-                    'fontTools warning when subsetting '
-                    f'"{self.family}": {log}')
+            subsetter.subset(ttfont)
         except TTLibError as exception:
-            LOGGER.warning(f'Unable to subset "{self.family}" with fontTools')
+            LOGGER.warning('Unable to subset "%s" with fontTools', self.family)
             LOGGER.debug('Original exception:', exc_info=exception)
         else:
             optimized_font = io.BytesIO()
@@ -406,7 +416,7 @@ def _build_bitmap_font_dictionary(font_dictionary, pdf, font, widths, compress, 
     for glyph in sorted(widths):
         if glyph - 1 not in widths:
             differences.append(glyph)
-        differences.append(f'/{glyph}')
+        differences.append(pydyf.name(f'{glyph}'))
     font_dictionary['FirstChar'] = first
     font_dictionary['LastChar'] = last
     font_dictionary['Encoding'] = pydyf.Dictionary({
@@ -438,7 +448,8 @@ def _build_bitmap_font_dictionary(font_dictionary, pdf, font, widths, compress, 
                     break
             else:
                 LOGGER.warning(
-                    f'Unknown bitmap metrics in "{font.family}" for glyph: {glyph_id}')
+                    'Unknown bitmap metrics in "%s" for glyph: %s',
+                    font.family, glyph_id)
                 continue
         else:
             data_start = 5 if glyph_format in (1, 2, 8) else 8
@@ -486,7 +497,8 @@ def _build_bitmap_font_dictionary(font_dictionary, pdf, font, widths, compress, 
                 subglyphs.append({'id': subglyph_id, 'x': x, 'y': y})
         else:  # pragma: no cover
             LOGGER.warning(
-                f'Unsupported bitmap glyph format in "{font.family}": {glyph_format}')
+                'Unsupported bitmap glyph format in "%s": %s',
+                font.family, glyph_format)
             glyph_info['bitmap'] = bytes(height * stride)
 
     for glyph_id, glyph_info in glyphs_info.items():
@@ -508,14 +520,14 @@ def _build_bitmap_font_dictionary(font_dictionary, pdf, font, widths, compress, 
                 sub_y = subglyph['y']
                 sub_id = subglyph['id']
                 if sub_id not in glyphs_info:
-                    LOGGER.warning(f'Unknown subglyph in "{font.family}": {sub_id}')
+                    LOGGER.warning('Unknown subglyph in "%s": %s', font.family, sub_id)
                     continue
                 subglyph = glyphs_info[sub_id]
                 if subglyph['bitmap'] is None:
                     # TODO: Support subglyph in subglyph.
                     LOGGER.warning(
-                        'Unsupported subglyph in subglyph in '
-                        f'"{font.family}": {sub_id}')
+                        'Unsupported subglyph in subglyph in "%s": %s',
+                        font.family, sub_id)
                     continue
                 for row_y in range(subglyph['height']):
                     row_slice = slice(
@@ -618,14 +630,23 @@ def _build_vector_font_dictionary(font_dictionary, pdf, font, widths, compress,
     if font.missing:
         # Add CMap that doesn’t include missing glyphs, so that they can be replaced by
         # .notdef.
+        cmap_extra = pydyf.Dictionary({
+            'Type': '/CMap',
+            'CMapName': '/WP-Encod-0',
+            'CIDSystemInfo': pydyf.Dictionary({
+                'Registry': pydyf.String('Adobe'),
+                'Ordering': pydyf.String('Identity'),
+                'Supplement': 0,
+            }),
+        })
         encoding = pydyf.Stream([
             b'/CIDInit /ProcSet findresource begin',
             b'12 dict begin',
             b'begincmap',
             b'/CIDSystemInfo',
             b'3 dict dup begin',
-            b'/Registry (WP) def',
-            b'/Ordering (Encod) def',
+            b'/Registry (Adobe) def',
+            b'/Ordering (Identity) def',
             b'/Supplement 0 def',
             b'end def',
             b'/CMapName /WP-Encod-0 def',
@@ -633,7 +654,7 @@ def _build_vector_font_dictionary(font_dictionary, pdf, font, widths, compress,
             b'1 begincodespacerange',
             b'<0000> <ffff>',
             b'endcodespacerange',
-        ], compress=compress)
+        ], cmap_extra, compress=compress)
         available = tuple(font.to_unicode)
         available_length = len(available)
         for i in range(ceil(available_length / 100)):

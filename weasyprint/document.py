@@ -15,10 +15,10 @@ from .formatting_structure.build import build_formatting_structure
 from .html import get_html_metadata
 from .images import get_image_from_uri as original_get_image_from_uri
 from .layout import LayoutContext, layout_document
-from .logger import PROGRESS_LOGGER
+from .logger import LOGGER, PROGRESS_LOGGER
 from .matrix import Matrix
 from .pdf import VARIANTS, generate_pdf
-from .pdf.metadata import generate_rdf_metadata
+from .pdf.metadata import DocumentMetadata
 from .text.fonts import FontConfiguration
 
 
@@ -77,10 +77,16 @@ class Page:
         #: The key ``None`` will contain inputs that are not part of a form.
         self.forms = {None: []}
 
-        #geocodings
+        #: The :obj:`list` of ``(rectangle, bounding_box, epsg)``
+        #: :obj:`tuples <tuple>` describing GeoPDF viewports. A ``rectangle``
+        #: is ``(x, y, width, height)``, in CSS pixels from the top-left of
+        #: the page, ``bounding_box`` is ``[xmin, ymin, xmax, ymax]`` in the
+        #: coordinate system given by the ``epsg`` code.
         self.geocodings = []
 
-        gather_anchors(page_box, self.anchors, self.links, self.bookmarks, self.forms, self.geocodings)
+        gather_anchors(
+            page_box, self.anchors, self.links, self.bookmarks, self.forms,
+            self.geocodings)
         self._page_box = page_box
 
     def paint(self, stream, scale=1):
@@ -88,64 +94,6 @@ class Page:
         with stream.stacked():
             stream.transform(a=scale, d=scale)
             draw_page(self._page_box, stream)
-
-
-class DocumentMetadata:
-    """Meta-information belonging to a whole :class:`Document`.
-
-    New attributes may be added in future versions of WeasyPrint.
-    """
-    def __init__(self, title=None, authors=None, description=None, keywords=None,
-                 generator=None, created=None, modified=None, attachments=None,
-                 lang=None, custom=None, generate_rdf_metadata=generate_rdf_metadata):
-        #: The title of the document, as a string or :obj:`None`.
-        #: Extracted from the ``<title>`` element in HTML
-        #: and written to the ``/Title`` info field in PDF.
-        self.title = title
-        #: The authors of the document, as a list of strings.
-        #: (Defaults to the empty list.)
-        #: Extracted from the ``<meta name=author>`` elements in HTML
-        #: and written to the ``/Author`` info field in PDF.
-        self.authors = authors or []
-        #: The description of the document, as a string or :obj:`None`.
-        #: Extracted from the ``<meta name=description>`` element in HTML
-        #: and written to the ``/Subject`` info field in PDF.
-        self.description = description
-        #: Keywords associated with the document, as a list of strings.
-        #: (Defaults to the empty list.)
-        #: Extracted from ``<meta name=keywords>`` elements in HTML
-        #: and written to the ``/Keywords`` info field in PDF.
-        self.keywords = keywords or []
-        #: The name of one of the software packages
-        #: used to generate the document, as a string or :obj:`None`.
-        #: Extracted from the ``<meta name=generator>`` element in HTML
-        #: and written to the ``/Creator`` info field in PDF.
-        self.generator = generator
-        #: The creation date of the document, as a string or :obj:`None`.
-        #: Dates are in one of the six formats specified in
-        #: `W3C’s profile of ISO 8601 <https://www.w3.org/TR/NOTE-datetime>`_.
-        #: Extracted from the ``<meta name=dcterms.created>`` element in HTML
-        #: and written to the ``/CreationDate`` info field in PDF.
-        self.created = created
-        #: The modification date of the document, as a string or :obj:`None`.
-        #: Dates are in one of the six formats specified in
-        #: `W3C’s profile of ISO 8601 <https://www.w3.org/TR/NOTE-datetime>`_.
-        #: Extracted from the ``<meta name=dcterms.modified>`` element in HTML
-        #: and written to the ``/ModDate`` info field in PDF.
-        self.modified = modified
-        #: A list of :class:`attachments <weasyprint.Attachment>`, empty by default.
-        #: Extracted from the ``<link rel=attachment>`` elements in HTML
-        #: and written to the ``/EmbeddedFiles`` dictionary in PDF.
-        self.attachments = attachments or []
-        #: Document language as BCP 47 language tags.
-        #: Extracted from ``<html lang=lang>`` in HTML.
-        self.lang = lang
-        #: Custom metadata, as a dict whose keys are the metadata names and
-        #: values are the metadata values.
-        self.custom = custom or {}
-        #: Custom RDF metadata generator, which will replace the default generator.
-        #: The function should return bytes containing an RDF XML.
-        self.generate_rdf_metadata = generate_rdf_metadata
 
 
 class DiskCache:
@@ -200,14 +148,15 @@ class Document:
 
     Typically obtained from :meth:`HTML.render() <weasyprint.HTML.render>`, but
     can also be instantiated directly with a list of :class:`pages <Page>`, a
-    set of :class:`metadata <DocumentMetadata>`, a :func:`url_fetcher
-    <weasyprint.default_url_fetcher>` function, and a :class:`font_config
+    set of :class:`metadata <DocumentMetadata>`, a :class:`url_fetcher
+    <weasyprint.urls.URLFetcher>`, and a :class:`font_config
     <weasyprint.text.fonts.FontConfiguration>`.
 
     """
 
     @classmethod
-    def _build_layout_context(cls, html, font_config, counter_style, options):
+    def _build_layout_context(cls, html, font_config, counter_style, color_profiles,
+                              options):
         target_collector = TargetCollector()
         page_rules = []
         layers = []
@@ -221,11 +170,12 @@ class Document:
             if not hasattr(css, 'matcher'):
                 css = CSS(
                     guess=css, media_type=html.media_type,
-                    font_config=font_config, counter_style=counter_style)
+                    font_config=font_config, counter_style=counter_style,
+                    color_profiles=color_profiles, url_fetcher=html.url_fetcher)
             user_stylesheets.append(css)
         style_for = get_all_computed_styles(
-            html, user_stylesheets, options['presentational_hints'],
-            font_config, counter_style, page_rules, layers, target_collector,
+            html, user_stylesheets, options['presentational_hints'], font_config,
+            counter_style, color_profiles, page_rules, layers, target_collector,
             options['pdf_forms'])
         get_image_from_uri = functools.partial(
             original_get_image_from_uri, cache=cache,
@@ -237,15 +187,25 @@ class Document:
         return context
 
     @classmethod
-    def _render(cls, html, font_config, counter_style, options):
+    def _render(cls, html, font_config, counter_style, color_profiles, options):
         if font_config is None:
             font_config = FontConfiguration()
 
         if counter_style is None:
             counter_style = CounterStyle()
 
+        if color_profiles is None:
+            color_profiles = {}
+
+        # Set default PDF options for PDF variants.
+        if variant := options['pdf_variant']:
+            _, properties = VARIANTS[variant]
+            for key, value in tuple(options.items()):
+                if value is None and key in properties:
+                    options[key] = properties[key]
+
         context = cls._build_layout_context(
-            html, font_config, counter_style, options)
+            html, font_config, counter_style, color_profiles, options)
 
         root_box = build_formatting_structure(
             html.etree_element, context.style_for, context.get_image_from_uri,
@@ -256,20 +216,19 @@ class Document:
         rendering = cls(
             [Page(page_box) for page_box in page_boxes],
             DocumentMetadata(**get_html_metadata(html)),
-            html.url_fetcher, font_config)
+            html.url_fetcher, font_config, color_profiles, options['output_intent'])
         rendering._html = html
         return rendering
 
-    def __init__(self, pages, metadata, url_fetcher, font_config):
+    def __init__(self, pages, metadata, url_fetcher, font_config, color_profiles,
+                 output_intent):
         #: A list of :class:`Page` objects.
         self.pages = pages
         #: A :class:`DocumentMetadata` object.
         #: Contains information that does not belong to a specific page
         #: but to the whole document.
         self.metadata = metadata
-        #: A function or other callable with the same signature as
-        #: :func:`weasyprint.default_url_fetcher` called to fetch external
-        #: resources such as stylesheets and images. (See :ref:`URL Fetchers`.)
+        #: A :class:`weasyprint.urls.URLFetcher` object (see :ref:`URL Fetchers`.)
         self.url_fetcher = url_fetcher
         #: A :obj:`dict` of fonts used by the document. Keys are hashes used to
         #: identify fonts, values are ``Font`` objects.
@@ -279,6 +238,10 @@ class Document:
         # rendering is destroyed. This is needed as font_config.__del__ removes
         # fonts that may be used when rendering
         self.font_config = font_config
+        # List of color profiles.
+        self.color_profiles = color_profiles
+        # Output intent identifier.
+        self.output_intent = output_intent
 
     def copy(self, pages='all'):
         """Take a subset of the pages.
@@ -310,7 +273,8 @@ class Document:
         elif not isinstance(pages, list):
             pages = list(pages)
         return type(self)(
-            pages, self.metadata, self.url_fetcher, self.font_config)
+            pages, self.metadata, self.url_fetcher, self.font_config,
+            self.color_profiles, self.output_intent)
 
     def make_bookmark_tree(self, scale=1, transform_pages=False):
         """Make a tree of all bookmarks in the document.
@@ -372,17 +336,18 @@ class Document:
             ``target``).
 
         """
+        for unknown in sorted(set(options) - set(DEFAULT_OPTIONS)):
+            LOGGER.error('Unknown PDF option: %s.', unknown)
         new_options = DEFAULT_OPTIONS.copy()
         new_options.update(options)
         options = new_options
 
-        # Set default PDF version for PDF variants.
+        # Set default PDF options for PDF variants.
         if variant := options['pdf_variant']:
             _, properties = VARIANTS[variant]
-            if 'version' in properties and not options['pdf_version']:
-                options['pdf_version'] = properties['version']
-            if 'identifier' in properties and not options['pdf_identifier']:
-                options['pdf_identifier'] = properties['identifier']
+            for key, value in tuple(options.items()):
+                if value is None and key in properties:
+                    options[key] = properties[key]
 
         pdf = generate_pdf(self, target, zoom, **options)
 

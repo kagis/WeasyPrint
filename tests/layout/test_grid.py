@@ -1,5 +1,9 @@
 """Tests for grid layout."""
 
+from math import isclose
+
+import pytest
+
 from ..testing_utils import assert_no_logs, render_pages
 
 
@@ -946,6 +950,72 @@ def test_grid_border():
 
 
 @assert_no_logs
+def test_grid_border_box():
+    page, = render_pages('''
+      <style>
+        article {
+          display: grid;
+          font-family: weasyprint;
+          font-size: 2px;
+          grid-template-rows: auto 1fr;
+          grid-template-columns: auto 1fr;
+          line-height: 1;
+          width: 14px;
+        }
+        div { box-sizing: border-box }
+      </style>
+      <article>
+        <div style="border: 1px solid; width: 7px">a</div> <div>b</div>
+        <div>c</div> <div style="padding: 2px; height: 7px">d</div>
+      </article>
+    ''')
+    html, = page.children
+    body, = html.children
+    article, = body.children
+    div_a, div_b, div_c, div_d = article.children
+    assert div_a.position_x == div_c.position_x == div_c.padding_box_x() == 0
+    assert div_a.padding_box_x() == 1
+    assert div_b.position_x == div_b.padding_box_x() == div_d.position_x == 7
+    assert div_d.content_box_x() == 9
+    assert div_a.width == 5
+    assert div_b.width == 7
+    assert div_c.width == 7
+    assert div_d.width == 3
+    assert article.width == 14
+    assert div_a.position_y == div_b.position_y == div_b.padding_box_y() == 0
+    assert div_a.padding_box_y() == 1
+    assert div_c.position_y == div_c.padding_box_y() == div_d.position_y == 4
+    assert div_d.content_box_y() == 6
+    assert div_a.height == 2
+    assert div_b.height == 4
+    assert div_c.height == 7
+    assert div_d.height == 3
+    assert article.height == 11
+
+
+@assert_no_logs
+def test_grid_item_border_box():
+    page, = render_pages('''
+      <style>
+        @page { size: 50px }
+      </style>
+      <article style="display: grid">
+        <section style="box-sizing: border-box; padding: 5px">
+          <div>
+    ''')
+    html, = page.children
+    body, = html.children
+    article, = body.children
+    section, = article.children
+    assert section.margin_width() == 50
+    assert section.width == 40
+    assert section.position_x == section.position_y == 0
+    div, = section.children
+    assert div.width == div.margin_width() == 40
+    assert div.position_x == div.position_y == 5
+
+
+@assert_no_logs
 def test_grid_border_split():
     page1, page2 = render_pages('''
       <style>
@@ -1530,8 +1600,8 @@ def test_grid_break_span():
     assert div5.height == div6.height == 2
     assert div7.position_y == div8.position_y == 6
     assert div7.height == 5
-    assert 2.6 < div8.height < 2.7
-    assert 2.3 < div9.height < 2.4
+    assert isclose(div8.height, 8 / 3)
+    assert isclose(div9.height, 7 / 3)
     line1, line2 = div7.children
     text, br = line1.children
     assert text.text == '7a'
@@ -1544,15 +1614,14 @@ def test_grid_break_span():
     text, = line.children
     assert text.text == '9'
 
-    # TODO: div7 height could be only 4, but algorithm is not specified.
     html, = page2.children
     body, = html.children
     section, = body.children
-    assert 6.6 < section.height < 6.7
+    assert isclose(section.height, 6)
     div7, div9, div10, div11, div12 = section.children
     assert div7.position_x == 0
     assert div8.position_x == 5
-    assert 4.6 < div7.height < 4.7
+    assert div7.height == 4
     line1, line2 = div7.children
     text, br = line1.children
     assert text.text == '7c'
@@ -1560,14 +1629,14 @@ def test_grid_break_span():
     assert text.text == '7d'
     assert not div9.children
     assert div10.position_x == 5
-    assert 1.3 < div10.position_y < 1.4
+    assert isclose(div10.position_y, 4 / 3)
     line, = div10.children
     text, = line.children
     assert text.text == '10'
     assert div11.position_x == 0
     assert div12.position_x == 5
-    assert 4.6 < div11.position_y < 4.7
-    assert 4.6 < div12.position_y < 4.7
+    assert div11.position_y == div12.position_y
+    assert isclose(div11.position_y, 4)
     line, = div11.children
     text, = line.children
     assert text.text == '11'
@@ -1702,3 +1771,259 @@ def test_grid_break_container():
     body, = html.children
     section, = body.children
     assert len(section.children) == 6
+
+
+@assert_no_logs
+def test_grid_bottom_page():
+    page1, page2 = render_pages('''
+      <style>
+        @page { size: 10px }
+        body { font: 2px / 1 weasyprint }
+        section { display: grid; grid-template-columns: 1fr 1fr }
+      </style>
+      <div style="height: 9px"></div>
+      <section>
+        <div>1</div>
+        <div>2</div>
+      </section>
+    ''')
+    html, = page1.children
+    body, = html.children
+    div, = body.children
+
+    html, = page2.children
+    body, = html.children
+    section, = body.children
+
+
+@assert_no_logs
+def test_grid_in_grid():
+    # Regression test for #2626.
+    page1, page2, = render_pages('''
+      <style>
+        @page { size: 10px }
+        body { font: 2px / 1 weasyprint }
+        section { display: grid; grid-template-columns: 1fr 1fr }
+      </style>
+      <div style="height: 7px"></div>
+      <section>
+        <section>
+          <div>1 2</div>
+          <div>3 4</div>
+        </section>
+        <section>
+          <div>5 6</div>
+          <div>7 8</div>
+        </section>
+      </section>
+    ''')
+    html, = page1.children
+    body, = html.children
+    div, section = body.children
+    subsection1, subsection2 = section.children
+    div1, div2 = subsection1.children
+    assert div1.children[0].children[0].text == '1'
+    assert div2.children[0].children[0].text == '3'
+    div3, div4 = subsection2.children
+    assert div3.children[0].children[0].text == '5'
+    assert div4.children[0].children[0].text == '7'
+
+    html, = page2.children
+    body, = html.children
+    section, = body.children
+    subsection1, subsection2 = section.children
+    div1, div2 = subsection1.children
+    assert div1.children[0].children[0].text == '2'
+    assert div2.children[0].children[0].text == '4'
+    div3, div4 = subsection2.children
+    assert div3.children[0].children[0].text == '6'
+    assert div4.children[0].children[0].text == '8'
+
+
+@assert_no_logs
+def test_grid_in_flex_after_full_height():
+    # Regression test for #2629.
+    page1, page2, = render_pages('''
+      <style>
+        @page { size: 10px }
+      </style>
+      <div style="height: 15px"></div>
+      <div style="display: flex; flex-direction: column">
+        <div style="display: grid">
+          <div></div>
+        </div>
+      </div>
+    ''')
+    html, = page1.children
+    body, = html.children
+    div, = body.children
+    assert not div.children
+
+    html, = page2.children
+    body, = html.children
+    flex, = body.children
+    grid, = flex.children
+    grid_item, = grid.children
+    assert not grid_item.children
+
+
+@assert_no_logs
+def test_grid_in_columns():
+    # Regression test for #2691.
+    page1, page2, = render_pages('''
+      <style>
+        @page { size: 12cm }
+        section { height: 10cm }
+      </style>
+      <div style="columns: 2">
+        <div style="display: grid">
+          <div>
+            <section></section>
+            <section></section>
+            <section></section>
+          </div>
+        </div>
+      </div>
+    ''')
+    html, = page1.children
+    body, = html.children
+    div, = body.children
+    column1, column2 = div.children
+    grid, = column1.children
+    assert len(grid.children) == 1
+    grid, = column2.children
+    assert len(grid.children) == 1
+
+    html, = page2.children
+    body, = html.children
+    div, = body.children
+    column1, column2 = div.children
+    grid, = column1.children
+    assert len(grid.children) == 1
+    grid, = column2.children
+    assert len(grid.children) == 0
+
+
+@pytest.mark.xfail
+@assert_no_logs
+def test_grid_in_columns_with_break():
+    # Regression test for #2695.
+    page1, page2, = render_pages('''
+      <style>
+        @page { size: 12px }
+        section { height: 4px }
+      </style>
+      <div style="columns: 1">
+        <div style="display: grid; margin-top: 6px">
+          <div>
+            <section></section>
+            <section></section>
+            <section></section>
+          </div>
+        </div>
+      </div>
+    ''')
+    html, = page1.children
+    body, = html.children
+    div, = body.children
+    column1, = div.children
+    grid, = column1.children
+    section1, = grid.children
+    assert section1.position_y == 6
+
+    html, = page2.children
+    body, = html.children
+    div, = body.children
+    column1, = div.children
+    grid, = column1.children
+    section2, section3 = grid.children
+    assert section2.position_y == 0
+    assert section3.position_y == 4
+
+
+@assert_no_logs
+@pytest.mark.parametrize(('value', 'width'), [
+    ('minmax(auto, auto)', 20),
+    ('minmax(0, auto)', 20),
+    ('minmax(1px, auto)', 20),
+    ('minmax(10px, auto)', 20),
+    ('minmax(auto, 10px)', 10),
+    ('minmax(auto, 30px)', 20),
+    ('minmax(10px, 10px)', 10),
+    ('minmax(30px, 30px)', 30),
+    ('1px', 1),
+    ('30px', 30),
+    ('minmax(0, 1px)', 1),
+])
+def test_grid_minmax_x(value, width):
+    page, = render_pages('''
+      <style>
+        @page { size: 20px }
+        body { font: 2px / 1 weasyprint }
+        article { display: grid; grid-auto-columns: %s }
+      </style>
+      <article style="display: grid">
+        <div>ab</div>
+      </article>
+    ''' % value)
+    html, = page.children
+    body, = html.children
+    article, = body.children
+    div, = article.children
+    assert div.width == width
+
+
+@assert_no_logs
+@pytest.mark.parametrize(('value', 'height'), [
+    ('minmax(auto, auto)', 2),
+    ('minmax(0, auto)', 2),
+    ('minmax(1px, auto)', 2),
+    ('minmax(10px, auto)', 10),
+    ('minmax(auto, 1px)', 1),
+    ('minmax(auto, 10px)', 10),
+    ('minmax(1px, 1px)', 1),
+    ('minmax(10px, 10px)', 10),
+    ('1px', 1),
+    ('10px', 10),
+    ('minmax(0, 1px)', 1),
+])
+def test_grid_minmax_y(value, height):
+    page, = render_pages('''
+      <style>
+        @page { size: 20px }
+        body { font: 2px / 1 weasyprint }
+        article { display: grid; grid-auto-rows: %s }
+      </style>
+      <article style="display: grid">
+        <div>ab</div>
+      </article>
+    ''' % value)
+    html, = page.children
+    body, = html.children
+    article, = body.children
+    div, = article.children
+    assert div.height == height
+
+
+@assert_no_logs
+def test_grid_minmax_y_span():
+    # An item spanning 2 minmax(1px, auto) rows grows both of them.
+    page, = render_pages('''
+      <style>
+        @page { size: 20px }
+        body { font: 2px / 1 weasyprint }
+        article { display: grid; grid-template-columns: 5px 5px;
+                  grid-auto-rows: minmax(1px, auto) }
+      </style>
+      <article>
+        <div style="grid-row: span 2">a<br>b<br>c<br>d</div>
+        <div>e</div>
+        <div>f</div>
+        <div style="grid-column: 1">g</div>
+      </article>
+    ''')
+    html, = page.children
+    body, = html.children
+    article, = body.children
+    *_, div_g = article.children
+    assert div_g.position_y == 8

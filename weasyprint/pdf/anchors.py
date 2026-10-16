@@ -1,20 +1,25 @@
 """Insert anchors, links, bookmarks and inputs in PDFs."""
 
 import collections
-import io
 import mimetypes
 from hashlib import md5
+from math import pi, sqrt
 from os.path import basename
 from urllib.parse import unquote, urlsplit
 
 import pydyf
 
 from .. import Attachment
+from ..html import parse_url
 from ..logger import LOGGER
 from ..text.ffi import ffi, gobject, pango
 from ..text.fonts import get_font_description
 from ..urls import URLFetchingError
 from ..wkt import get_wkt_from_epsg
+
+# Mimetypes datastore with only types registered in the stdlib.
+MIMETYPES = mimetypes.MimeTypes()
+
 
 def add_links(links_and_anchors, matrix, pdf, page, names, tags):
     """Include hyperlinks in given PDF page."""
@@ -92,6 +97,38 @@ def add_outlines(pdf, bookmarks, parent=None):
     return outlines, count
 
 
+def _get_human_name(form, element, input_name):
+    """Return human-readable alternate name for PDF form fields.
+
+    The chosen name is the first between:
+
+    - the label text
+    - the title attribute
+    - the placeholder attribute
+    - the name attribute
+
+    """
+    if form:
+        input_id = element.get('id')
+        for label in form.element.findall('.//label'):
+            for_match = input_id and input_id == label.get('for')
+            is_child = element in label.findall('.//input')
+            if for_match or is_child:
+                # Label is found, find its box to get its whitespace-processed text.
+                for box in form.descendants():
+                    if box.element == label:
+                        return box.content_text
+                # No label box found, use the element text as fallback.
+                text = label.text or ''
+                text += ''.join((child.tail or '') for child in label)
+                return text.strip()
+    if title := element.get('title'):
+        return title
+    elif placeholder := element.get('placeholder'):
+        return placeholder
+    return element.get('name', '')
+
+
 def add_forms(forms, matrix, pdf, page, resources, stream, font_map):
     """Include form inputs in PDF."""
     if not forms or not any(forms.values()):
@@ -110,13 +147,14 @@ def add_forms(forms, matrix, pdf, page, resources, stream, font_map):
         pango.pango_font_map_create_context(font_map),
         gobject.g_object_unref)
     inputs_with_forms = [
-        (form, element, style, rectangle)
+        (form, box, rectangle)
         for form, inputs in forms.items()
-        for element, style, rectangle in inputs
-    ]
+        for box, rectangle in inputs]
     radio_groups = collections.defaultdict(dict)
     forms = collections.defaultdict(dict)
-    for i, (form, element, style, rectangle) in enumerate(inputs_with_forms):
+    for i, (form, box, rectangle) in enumerate(inputs_with_forms):
+        element = box.element
+        style = box.style
         rectangle = (
             *matrix.transform_point(*rectangle[:2]),
             *matrix.transform_point(*rectangle[2:]))
@@ -125,7 +163,8 @@ def add_forms(forms, matrix, pdf, page, resources, stream, font_map):
         input_value = element.attrib.get('value', 'Yes')
         default_name = f'unknown-{page_reference.decode()}-{i}'
         input_name = element.attrib.get('name', default_name)
-        # TODO: where does this 0.75 scale come from?
+        input_human_name = _get_human_name(form, element, input_name)
+        # Set smaller font size to align the text within the box.
         font_size = style['font_size'] * 0.75
         field_stream = stream.clone()
         field_stream.set_color(style['color'])
@@ -136,14 +175,28 @@ def add_forms(forms, matrix, pdf, page, resources, stream, font_map):
             'P': page.reference,
             'F': 1 << (3 - 1),  # Print flag
             'T': pydyf.String(input_name),
+            'TU': pydyf.String(input_human_name),
         })
         if input_type in ('radio', 'checkbox'):
+            # Create stream when input is checked.
+            width = rectangle[2] - rectangle[0]
+            height = rectangle[1] - rectangle[3]
+            cx, cy = width / 2, height / 2
+            rx, ry = width / 2, height / 2
+            checked_stream = stream.clone(extra={
+                'Resources': resources.reference,
+                'Type': '/XObject',
+                'Subtype': '/Form',
+                'BBox': pydyf.Array((0, 0, width, height)),
+            })
+            checked_stream.set_color(style['color'])
             if input_type == 'radio':
                 if input_name not in radio_groups[form]:
                     radio_groups[form][input_name] = group = pydyf.Dictionary({
                         'FT': '/Btn',
                         'Ff': (1 << (15 - 1)) + (1 << (16 - 1)),  # NoToggle & Radio
                         'T': pydyf.String(input_name),
+                        'TU': pydyf.String(input_human_name),
                         'V': '/Off',
                         'Kids': pydyf.Array(),
                         'Opt': pydyf.Array(),
@@ -151,58 +204,45 @@ def add_forms(forms, matrix, pdf, page, resources, stream, font_map):
                     pdf.add_object(group)
                     pdf.catalog['AcroForm']['Fields'].append(group.reference)
                 group = radio_groups[form][input_name]
-                font_size = style['font_size'] * 0.5
-                character = 'l'  # Disc character in Dingbats
+                px, py = rx / sqrt(pi), ry / sqrt(pi)
+                checked_stream.move_to(cx + rx, cy)
+                checked_stream.curve_to(cx + rx, cy + py, cx + px, cy + ry, cx, cy + ry)
+                checked_stream.curve_to(cx - px, cy + ry, cx - rx, cy + py, cx - rx, cy)
+                checked_stream.curve_to(cx - rx, cy - py, cx - px, cy - ry, cx, cy - ry)
+                checked_stream.curve_to(cx + px, cy - ry, cx + rx, cy - py, cx + rx, cy)
             else:
-                character = '4'  # Check character in Dingbats
-
-            # Create stream when input is checked.
-            width = rectangle[2] - rectangle[0]
-            height = rectangle[1] - rectangle[3]
-            checked_stream = stream.clone(extra={
-                'Resources': resources.reference,
-                'Type': '/XObject',
-                'Subtype': '/Form',
-                'BBox': pydyf.Array((0, 0, width, height)),
-            })
-            checked_stream.push_state()
-            checked_stream.begin_text()
-            checked_stream.set_color(style['color'])
-            checked_stream.set_font_size('ZaDb', font_size)
-            # Center (assuming that Dingbat’s characters have a 0.75em size).
-            x = (width - font_size * 0.75) / 2
-            y = (height - font_size * 0.75) / 2
-            checked_stream.move_text_to(x, y)
-            checked_stream.show_text_string(character)
-            checked_stream.end_text()
-            checked_stream.pop_state()
+                checked_stream.move_to(cx - rx, cy)
+                checked_stream.line_to(cx, cy - ry)
+                checked_stream.line_to(cx + rx, cy + ry)
+                checked_stream.line_to(cx - rx / 7, cy - ry / 3)
+            checked_stream.close()
+            checked_stream.fill()
             pdf.add_object(checked_stream)
 
-            field_stream.set_font_size('ZaDb', font_size)
-
+            color = style['color'].coordinates
             checked = 'checked' in element.attrib
-            key = len(group['Kids']) if input_type == 'radio' else 'on'
+            key = f'{len(group["Kids"])}' if input_type == 'radio' else 'on'
             appearance = pydyf.Dictionary({key: checked_stream.reference})
             field['FT'] = '/Btn'
-            field['DA'] = pydyf.String(b' '.join(field_stream.stream))
-            field['AS'] = f'/{key}' if checked else '/Off'
+            field['AS'] = pydyf.name(key) if checked else '/Off'
             field['AP'] = pydyf.Dictionary({'N': appearance})
-            field['MK'] = pydyf.Dictionary({'CA': pydyf.String(character)})
+            field['MK'] = pydyf.Dictionary({'BC': pydyf.Array(color)})
+            field['Border'] = pydyf.Array((0, 0, 0))
             pdf.add_object(field)
             if input_type == 'radio':
                 field['Parent'] = group.reference
                 if checked:
-                    group['V'] = f'/{key}'
+                    group['V'] = pydyf.name(key)
                 group['Kids'].append(field.reference)
                 group['Opt'].append(pydyf.String(input_value))
             else:
                 field['T'] = pydyf.String(input_name)
+                field['TU'] = pydyf.String(input_human_name)
                 field['V'] = field['AS']
 
         elif element.tag == 'select':
             font_description = get_font_description(style)
-            font = pango.pango_font_map_load_font(
-                font_map, context, font_description)
+            font = pango.pango_font_map_load_font(font_map, context, font_description)
             font, _ = stream.add_font(font)
             font.used_in_forms = True
 
@@ -230,28 +270,30 @@ def add_forms(forms, matrix, pdf, page, resources, stream, font_map):
             pdf.add_object(field)
 
         elif input_type == 'submit' or element.tag == 'button':
-            flags = 1 << (3 - 1)  # HTML form format
-            if form.attrib.get('method', '').lower() != 'post':
-                flags += 1 << (4 - 1)  # GET method
-            fields = pydyf.Array(field.reference for field in forms[form].values())
-            field['FT'] = '/Btn'
-            field['DA'] = pydyf.String(b' '.join(field_stream.stream))
-            field['V'] = pydyf.String(form.attrib.get('value', ''))
-            field['Ff'] = 1 << (17 - 1)  # Push-button
-            field['A'] = pydyf.Dictionary({
-                'Type': '/Action',
-                'S': '/SubmitForm',
-                'F': pydyf.String(form.attrib.get('action')),
-                'Fields': fields,
-                'Flags': flags,
-            })
-            pdf.add_object(field)
+            action = form.element.get('action')
+            if action_url := parse_url(action, base_url=None, allow_relative=True):
+                flags = 1 << (3 - 1)  # HTML form format
+                if form.element.get('method', '').lower() != 'post':
+                    flags += 1 << (4 - 1)  # GET method
+                    fields = pydyf.Array(
+                        field.reference for field in forms[form].values())
+                    field['FT'] = '/Btn'
+                    field['DA'] = pydyf.String(b' '.join(field_stream.stream))
+                    field['V'] = pydyf.String(form.element.get('value', ''))
+                    field['Ff'] = 1 << (17 - 1)  # Push-button
+                    field['A'] = pydyf.Dictionary({
+                        'Type': '/Action',
+                        'S': '/SubmitForm',
+                        'F': pydyf.String(action_url),
+                        'Fields': fields,
+                        'Flags': flags,
+                    })
+                    pdf.add_object(field)
 
         else:
             # Text, password, textarea, files, and other unknown fields.
             font_description = get_font_description(style)
-            font = pango.pango_font_map_load_font(
-                font_map, context, font_description)
+            font = pango.pango_font_map_load_font(font_map, context, font_description)
             font, _ = stream.add_font(font)
             font.used_in_forms = True
 
@@ -270,6 +312,7 @@ def add_forms(forms, matrix, pdf, page, resources, stream, font_map):
                 field['MaxLen'] = max_length
             pdf.add_object(field)
 
+        box.widget_annotation = field
         page['Annots'].append(field.reference)
         pdf.catalog['AcroForm']['Fields'].append(field.reference)
         if input_name not in forms:
@@ -285,7 +328,7 @@ def add_annotations(links, matrix, document, pdf, page, annot_files, compress):
     # links and coalesce link shapes that originate from the same HTML
     # link. This would give a feeling similiar to what browsers do with
     # links that span multiple lines.
-    for link_type, annot_target, rectangle, _ in links:
+    for link_type, annot_target, rectangle, box in links:
         if link_type != 'attachment':
             continue
         if annot_target not in annot_files:
@@ -295,8 +338,9 @@ def add_annotations(links, matrix, document, pdf, page, annot_files, compress):
             # TODO: Use the title attribute as description. The comment
             # above about multiple regions won't always be correct, because
             # two links might have the same href, but different titles.
+            name = box.element.get('download')
             attachment = Attachment(
-                url=annot_target, url_fetcher=document.url_fetcher)
+                url=annot_target, url_fetcher=document.url_fetcher, name=name)
             annot_files[annot_target] = write_pdf_attachment(
                 pdf, attachment, compress)
         annot_file = annot_files[annot_target]
@@ -327,12 +371,15 @@ def add_annotations(links, matrix, document, pdf, page, annot_files, compress):
 
 
 def add_geocodings(page_geocoding, matrix, pdf, page):
+    """Include GeoPDF viewports (``/VP``) in given PDF page."""
     for geocoding in page_geocoding:
         rec, bounding_box, epsg = geocoding
         size = (rec[0] + rec[2], rec[1] + rec[3])
         rec = (
-                *matrix.transform_point(*rec[:2]),
-                *matrix.transform_point(*size))
+            *matrix.transform_point(*rec[:2]),
+            *matrix.transform_point(*size))
+        gpts = '[ {0:f} {1:f} {0:f} {3:f} {2:f} {3:f} {2:f} {1:f} ]'.format(
+            *bounding_box)
         bbox = pydyf.Dictionary({
             'BBox': pydyf.Array(rec),
             'Measure': pydyf.Dictionary({
@@ -340,9 +387,9 @@ def add_geocodings(page_geocoding, matrix, pdf, page):
                 'GCS': pydyf.Dictionary({
                     'EPSG': epsg,
                     'Type': '/GEOGCS',
-                    'WKT': '({wkt})'.format(wkt = get_wkt_from_epsg(epsg)),
+                    'WKT': f'({get_wkt_from_epsg(epsg)})',
                 }),
-                'GPTS': '[ {0:f} {1:f} {0:f} {3:f} {2:f} {3:f} {2:f} {1:f} ]'.format(*bounding_box),
+                'GPTS': gpts,
                 'LPTS': '[ 0 1 0 0 1 0 1 1 ]',
                 'Subtype': '/GEO',
                 'Type': '/Measure'
@@ -360,18 +407,12 @@ def write_pdf_attachment(pdf, attachment, compress):
     """Write an attachment to the PDF stream."""
     # Attachments from document links like <link> or <a> can only be URLs.
     # They're passed in as tuples
-    url = None
-    uncompressed_length = 0
-    stream = b''
+    url = mime_type = None
     try:
-        with attachment.source as (_, source, url, _):
-            if isinstance(source, str):
-                source = source.encode()
-            if isinstance(source, bytes):
-                source = io.BytesIO(source)
-            for data in iter(lambda: source.read(4096), b''):
-                uncompressed_length += len(data)
-                stream += data
+        with attachment.source as (file_obj, url, _, mime_type):
+            stream = file_obj.read()
+            if isinstance(stream, str):
+                stream = stream.encode()
     except URLFetchingError as exception:
         LOGGER.error('Failed to load attachment: %s', exception)
         LOGGER.debug('Error while loading attachment:', exc_info=exception)
@@ -382,22 +423,28 @@ def write_pdf_attachment(pdf, attachment, compress):
     # details on the possible filename and MIME type.
     if attachment.name:
         filename = attachment.name
-    elif url and urlsplit(url).path:
+    elif url and not url.startswith('data:') and urlsplit(url).path:
         filename = basename(unquote(urlsplit(url).path))
     else:
         filename = 'attachment.bin'
-    mime_type = mimetypes.guess_type(filename, strict=False)[0]
-    if not mime_type:
-        mime_type = 'application/octet-stream'
+    mime_type = (
+        mime_type or
+        # First try the stdlib mimetype datastore and then fall back
+        # to trying the extended lookup utilizing more OS specific databases.
+        # This ensure consistent behaviour across platforms for common file types.
+        # See #2707.
+        MIMETYPES.guess_type(filename, strict=False)[0] or
+        mimetypes.guess_type(filename, strict=False)[0] or
+        'application/octet-stream')
 
     creation = pydyf.String(attachment.created.strftime('D:%Y%m%d%H%M%SZ'))
     mod = pydyf.String(attachment.modified.strftime('D:%Y%m%d%H%M%SZ'))
     file_extra = pydyf.Dictionary({
         'Type': '/EmbeddedFile',
-        'Subtype': f'/{mime_type.replace("/", "#2f")}',
+        'Subtype': pydyf.name(mime_type),
         'Params': pydyf.Dictionary({
             'CheckSum': f'<{attachment.md5}>',
-            'Size': uncompressed_length,
+            'Size': len(stream),
             'CreationDate': creation,
             'ModDate': mod,
         })
@@ -455,9 +502,8 @@ def resolve_links(pages):
                 page_links.append(link)
         yield page_links, paged_anchors.pop(0)
 
+
 def resolve_geocodings(pages):
+    """Yield the list of GeoPDF viewports (see :attr:`Page.geocodings`) per page."""
     for page in pages:
-        page_geocodings = []
-        for geocoding in page.geocodings:
-            page_geocodings.append(geocoding)
-        yield page_geocodings
+        yield list(page.geocodings)
